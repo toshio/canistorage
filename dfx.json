@@ -1,0 +1,25 @@
+{
+  "canisters": {
+    "canistorage": {
+      "type": "custom",
+      "build": "bash build.sh canistorage",
+      "candid": "src/canistorage.did",
+      "wasm": "target/wasm32-unknown-unknown/release/canistorage.wasm",
+      "shrink" : true,
+      "optimize": "cycles",
+      "metadata": [
+        {
+          "name": "candid:service"
+        }
+      ]
+    }
+  },
+  "defaults": {
+    "build": {
+      "args": "",
+      "packtool": ""
+    }
+  },
+  "output_env_file": ".env",
+  "version": 1
+}

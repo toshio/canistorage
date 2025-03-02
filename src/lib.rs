@@ -4,6 +4,8 @@
 ///
 use std::cell::RefCell;
 use ic_stable_structures::{memory_manager::{MemoryId, MemoryManager}, DefaultMemoryImpl};
+pub mod transport;
+use crate::transport::{SaveOption, SaveResult, LoadResult}; // for export_candid!()
 
 /// wasi2ic
 const WASI_MEMORY_ID: MemoryId = MemoryId::new(0);
@@ -31,7 +33,7 @@ fn version() -> String {
 }
 
 // Enable Candid export
-ic_cdk::export_candid!();
+ic_cdk_macros::export_candid!();
 
 // Test
 #[cfg(test)]
@@ -40,6 +42,6 @@ mod tests {
 
     #[test]
     fn test_version() {
-        assert_eq!(VERSION, "0.1.0");
+        assert_eq!(version(), "canistorage 0.1.0");
     }
 }

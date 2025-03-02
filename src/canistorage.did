@@ -1,1 +1,11 @@
-service : () -> { version : () -> (text) query }
+type SaveOption = record { append : bool; overwrite : bool };
+type SaveResult = record { code : nat32; message : opt text };
+service : () -> {
+  createDirectory : (text) -> (bool);
+  delete : (text) -> (bool);
+  listFiles : () -> (vec text) query;
+  load : (text) -> (blob) query;
+  removeDirectory : (text) -> (bool);
+  save : (text, text, blob, opt SaveOption) -> (SaveResult);
+  version : () -> (text) query;
+}

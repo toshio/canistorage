@@ -76,6 +76,7 @@ https://internetcomputer.org/docs/current/developer-docs/smart-contracts/maintai
 
 Internet Computer上のCanisterは、複数のノード上に配置されて実行されます。  
 2025年2月現時点では、Canister内のHeap MemoryやStable Memoryはとくに暗号化されていないため、悪意あるノードプロバイダーがいた場合、内容が閲覧できてしまいます。  
-将来的には、SEV-SNPといった仕組みによりハードウェアレベルで暗号化され、ノードプロバイダーからも見えなくなるとのことです。
+将来的には、SEV-SNPといった仕組みによりハードウェアレベルで暗号化され、ノードプロバイダーからも見えなくなるとのことです。  
+本ストレージは、このハードウェアレベルの暗号化が適用されていることを想定した運用とします。
 
-ソフトウェアレベルで実現する場合、[VetKeys](https://internetcomputer.org/blog/features/vetkey-primer)などの暗号技術を利用することも考えられます。
+ソフトウェアレベルでのデータ暗号化を実現する場合、エンドツーエンドで[VetKeys](https://internetcomputer.org/blog/features/vetkey-primer)などの暗号技術を利用することも考えられますが、将来に復号できなくなるリスクや、Canister内でのデータ活用を想定した場合にCanister内のプログラムからplainで扱えるのがよいと考えているため、ストレージ機能としてデータ暗号化は行わず、上位アプリケーション層で考慮するものとします。

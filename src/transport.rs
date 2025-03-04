@@ -135,16 +135,21 @@ fn load(path:String) -> LoadResult {
 fn delete(path:String) -> bool {
     match fs::remove_file(path) {
         Ok(_) => true,
-        Err(e) => {
-            eprintln!("Error: {:?}", e);
-            false
+        Err(e) => match e.kind() {
+            ErrorKind::NotFound => {
+                false
+            },
+            _=> {
+                // FIXME: should be error
+                false
+            },
         }
     }
 }
 
 #[ic_cdk::query(name="listFiles")]
-fn list_files() -> Vec<String> {
-    let paths = fs::read_dir(".").unwrap();
+fn list_files(path:String) -> Vec<String> {
+    let paths = fs::read_dir(path).unwrap();
     let mut files = Vec::new();
     for path in paths {
         let path = path.unwrap().path();
@@ -196,7 +201,7 @@ mod tests {
     }
 
     #[test]
-    fn test_save_new() {
+    fn test_save() {
         let _context = setup();
 
         // new file
@@ -218,5 +223,25 @@ mod tests {
         let result = save("./.test/file.txt".to_string(), "text/plain".to_string(), data.clone(), false);
         // FIXME should be error.
         assert_eq!(result.code, ERROR_FILE_ALREADY_EXISTS);
+    }
+
+    #[test]
+    fn test_delete() {
+        let _context = setup();
+
+        // new file
+        let data = "Hello, World!".as_bytes().to_vec();
+        save("./.test/file.txt".to_string(), "text/plain".to_string(), data.clone(), false);
+        let result = load("./.test/file.txt".to_string());
+        assert_eq!(result.code, SUCCESS);
+        assert_eq!(result.data.unwrap(), data);
+
+        // delete
+        let result = delete("./.test/file.txt".to_string());
+        assert_eq!(result, true);
+
+        // delete (File not found)
+        let result = delete("./.test/file.txt".to_string());
+        assert_eq!(result, false);
     }
 }

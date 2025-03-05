@@ -1,6 +1,6 @@
 use std::fs;
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Write, ErrorKind};
+use std::io::{BufReader, Read, Write, ErrorKind};
 use serde::{Serialize, Deserialize};
 use candid::{CandidType, Principal};
 use sha2::{Sha256, Digest};
@@ -35,22 +35,36 @@ pub struct LoadResult {
     message: Option<String>
 }
 
-fn get_file_info(path:String) -> Option<FileInfo> {
-    // TODO: Implement
-    None
+fn file_info_path(path:&String) -> String {
+    match path.rfind("/") {
+        Some(index) => {
+            format!("{}`{}", &path[0..index +1], &path[index + 1..])
+        },
+        None => {
+            format!("`{}", path)
+        }
+    }
 }
 
-fn set_file_info(path:String, info:FileInfo) -> () {
-    // TODO: Implement
+fn get_file_info(path:&String) -> Option<FileInfo> {
+    let file = File::open(file_info_path(path)).unwrap();
+    let reader = BufReader::new(file);
+
+    let result = serde_cbor::from_reader(reader).unwrap();
+    Some(result)
+}
+
+fn set_file_info(path:&String, info:FileInfo) -> () {
+    let _ = fs::write(file_info_path(path), serde_cbor::to_vec(&info).unwrap());
 }
 
 /// Uload a file to the canister (less than 2MiB)
 #[ic_cdk::update]
 fn save(path:String, mime_type:String, data:Vec<u8>, overwrite:bool) -> SaveResult {
     match if overwrite == true {
-        OpenOptions::new().write(true).create(true).truncate(true).open(path)
+        OpenOptions::new().write(true).create(true).truncate(true).open(&path)
     } else {
-        OpenOptions::new().write(true).create_new(true).open(path)
+        OpenOptions::new().write(true).create_new(true).open(&path)
     } {
         Ok(mut file) => {
             match file.write_all(&data) {
@@ -65,8 +79,8 @@ fn save(path:String, mime_type:String, data:Vec<u8>, overwrite:bool) -> SaveResu
                         writable: Vec::new(),
                         signature: None,
                     };
-                    // TODO set_file_info()
-        
+                    set_file_info(&path, info);
+
                     SaveResult {
                         code: SUCCESS,
                         message: None

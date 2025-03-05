@@ -8,6 +8,8 @@ use sha2::{Sha256, Digest};
 const SUCCESS: u32 = 0;
 const ERROR_FILE_NOT_FOUND: u32 = 1;
 const ERROR_FILE_ALREADY_EXISTS: u32 = 2;
+const ERROR_INVALID_PATH: u32 = 3;
+
 const ERROR_UNKNOWN: u32 = u32::MAX;
 
 #[derive(CandidType, Serialize, Deserialize)]
@@ -33,6 +35,29 @@ pub struct LoadResult {
     code: u32,
     data: Option<Vec<u8>>,
     message: Option<String>
+}
+
+fn validate_path(path:&String) -> Result<(), String> {
+    // length
+    if path.len() == 0 {
+        return Err("Path is empty".to_string());
+    }
+
+    // starts with
+    #[cfg(test)]
+    if path.starts_with("./.test/") == false {
+        return Err("Not full path".to_string());
+    }
+    #[cfg(not(test))]
+    if path.starts_with("/") == false {
+        return Err("Not full path".to_string());
+    }
+
+    // invalid characters
+    if ["..", "`"].iter().any(|s| path.contains(s)) {
+        return Err("Path contains invalid characters".to_string());
+    }
+    Ok(())
 }
 
 fn file_info_path(path:&String) -> String {
@@ -61,6 +86,15 @@ fn set_file_info(path:&String, info:FileInfo) -> () {
 /// Uload a file to the canister (less than 2MiB)
 #[ic_cdk::update]
 fn save(path:String, mime_type:String, data:Vec<u8>, overwrite:bool) -> SaveResult {
+    match validate_path(&path) {
+        Err(e) => {
+            return SaveResult {
+                code: ERROR_INVALID_PATH,
+                message: Some(e)
+            }
+        },
+        _ => {}
+    };
     match if overwrite == true {
         OpenOptions::new().write(true).create(true).truncate(true).open(&path)
     } else {
@@ -145,6 +179,7 @@ fn load(path:String) -> LoadResult {
     }
 }
 
+// FIXME result should be more detailed
 #[ic_cdk::update(name="delete")]
 fn delete(path:String) -> bool {
     match fs::remove_file(path) {
@@ -161,6 +196,7 @@ fn delete(path:String) -> bool {
     }
 }
 
+// FIXME result should be more detailed
 #[ic_cdk::query(name="listFiles")]
 fn list_files(path:String) -> Vec<String> {
     let paths = fs::read_dir(path).unwrap();
@@ -173,9 +209,16 @@ fn list_files(path:String) -> Vec<String> {
     files
 }
 
+// FIXME result should be more detailed
 #[ic_cdk::update(name="createDirectory")]
 fn create_directory(path:String) -> bool {
-    match fs::create_dir(path) {
+    match validate_path(&path) {
+        Err(e) => {
+            return false;
+        },
+        _ => {}
+    };
+    match fs::create_dir(&path) {
         Ok(_) => true,
         Err(e) => {
             eprintln!("Error: {:?}", e);
@@ -184,6 +227,7 @@ fn create_directory(path:String) -> bool {
     }
 }
 
+// FIXME result should be more detailed
 #[ic_cdk::update(name="removeDirectory")]
 fn remove_directory(path:String) -> bool {
     match fs::remove_dir(path) {

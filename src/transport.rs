@@ -9,8 +9,12 @@ const SUCCESS: u32 = 0;
 const ERROR_FILE_NOT_FOUND: u32 = 1;
 const ERROR_FILE_ALREADY_EXISTS: u32 = 2;
 const ERROR_INVALID_PATH: u32 = 3;
-
 const ERROR_UNKNOWN: u32 = u32::MAX;
+
+#[cfg(test)]
+const ROOT: &str = "./.test";
+#[cfg(not(test))]
+const ROOT: &str = "/";
 
 #[derive(CandidType, Serialize, Deserialize)]
 pub struct FileInfo {
@@ -44,8 +48,7 @@ fn validate_path(path:&String) -> Result<(), String> {
     }
 
     // starts with
-    #[cfg(test)]
-    if path.starts_with("./.test/") == false {
+    if path.starts_with(ROOT) == false {
         return Err("Not full path".to_string());
     }
     #[cfg(not(test))]
@@ -81,6 +84,44 @@ fn get_file_info(path:&String) -> Option<FileInfo> {
 
 fn set_file_info(path:&String, info:FileInfo) -> () {
     let _ = fs::write(file_info_path(path), serde_cbor::to_vec(&info).unwrap());
+}
+
+fn check_read_permission(principal:&Principal, path:&String, file_info:&FileInfo) -> bool {
+    if file_info.readable.iter().any(|p| p == principal) {
+        true
+    } else if path == ROOT {
+        false
+    } else {
+        let parent = match path.rfind("/") {
+            Some(index) => {
+                path[0..index + 1].to_string()
+            },
+            None => {
+                ROOT.to_string()
+            }
+        };
+        let parent_info = get_file_info(&parent).unwrap();
+        check_read_permission(principal, &parent, &parent_info)
+    }
+}
+
+fn check_write_permission(principal:&Principal, path:&String, file_info:&FileInfo) -> bool {
+    if file_info.writable.iter().any(|p| p == principal) {
+        true
+    } else if path == ROOT {
+        false
+    } else {
+        let parent = match path.rfind("/") {
+            Some(index) => {
+                path[0..index + 1].to_string()
+            },
+            None => {
+                ROOT.to_string()
+            }
+        };
+        let parent_info = get_file_info(&parent).unwrap();
+        check_write_permission(principal, &parent, &parent_info)
+    }
 }
 
 /// Uload a file to the canister (less than 2MiB)

@@ -86,41 +86,71 @@ fn set_file_info(path:&String, info:FileInfo) -> () {
     let _ = fs::write(file_info_path(path), serde_cbor::to_vec(&info).unwrap());
 }
 
-fn check_read_permission(principal:&Principal, path:&String, file_info:&FileInfo) -> bool {
-    if file_info.readable.iter().any(|p| p == principal) {
-        true
-    } else if path == ROOT {
+/// Returns whether the specified path is readable or not
+///
+/// # Arguments
+///
+/// * `principal` - Principal to check
+/// * `path` - must start with ROOT
+/// * `file_info` - FileInfo
+fn check_read_permission(principal:&Principal, path:&String, file_info:Option<&FileInfo>) -> bool {
+    // First, check readable of file_info
+    if let Some(info) = file_info {
+        if info.readable.iter().any(|p| p == principal) {
+            // Found readable
+            return true;
+        }
+    }
+    if path == ROOT {
+        // Second, check if ROOT
         false
     } else {
-        let parent = match path.rfind("/") {
+        // Then, check parent file_info recursively
+        let parent_path = match path.rfind("/") {
             Some(index) => {
                 path[0..index + 1].to_string()
             },
             None => {
-                ROOT.to_string()
+                // Special case: "" -> "/""
+                "/".to_string()
             }
         };
-        let parent_info = get_file_info(&parent).unwrap();
-        check_read_permission(principal, &parent, &parent_info)
+        let parent_info = get_file_info(&parent_path);
+        check_read_permission(principal, &parent_path, parent_info.as_ref())
     }
 }
 
-fn check_write_permission(principal:&Principal, path:&String, file_info:&FileInfo) -> bool {
-    if file_info.writable.iter().any(|p| p == principal) {
-        true
-    } else if path == ROOT {
+/// Returns whether the specified path is writable or not
+///
+/// # Arguments
+///
+/// * `principal` - Principal to check
+/// * `path` - must start with ROOT
+/// * `file_info` - FileInfo
+fn check_write_permission(principal:&Principal, path:&String, file_info:Option<&FileInfo>) -> bool {
+    // First, check writeable of file_info
+    if let Some(info) = file_info {
+        if info.writeable.iter().any(|p| p == principal) {
+            // Found writeable
+            return true;
+        }
+    }
+    if path == ROOT {
+        // Second, check if ROOT
         false
     } else {
-        let parent = match path.rfind("/") {
+        // Then, check parent file_info recursively
+        let parent_path = match path.rfind("/") {
             Some(index) => {
                 path[0..index + 1].to_string()
             },
             None => {
-                ROOT.to_string()
+                // Special case: "" -> "/""
+                "/".to_string()
             }
         };
-        let parent_info = get_file_info(&parent).unwrap();
-        check_write_permission(principal, &parent, &parent_info)
+        let parent_info = get_file_info(&parent_path);
+        check_write_permission(principal, &parent_path, parent_info.as_ref())
     }
 }
 

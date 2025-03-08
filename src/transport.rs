@@ -106,8 +106,8 @@ fn get_file_info(path:&String) -> Option<FileInfo> {
     }
 }
 
-fn set_file_info(path:&String, info:FileInfo) -> () {
-    let _ = fs::write(file_info_path(path), serde_cbor::to_vec(&info).unwrap());
+fn set_file_info(path:&String, info:&FileInfo) -> () {
+    let _ = fs::write(file_info_path(path), serde_cbor::to_vec(info).unwrap());
 }
 
 /// Returns whether the specified path is readable or not
@@ -132,7 +132,7 @@ fn check_read_permission(principal:&Principal, path:&String, file_info:Option<&F
         // Then, check parent file_info recursively
         let parent_path = match path.rfind("/") {
             Some(index) => {
-                path[0..index + 1].to_string()
+                path[0..index].to_string()
             },
             None => {
                 // Special case: "" -> "/""
@@ -166,7 +166,7 @@ fn check_write_permission(principal:&Principal, path:&String, file_info:Option<&
         // Then, check parent file_info recursively
         let parent_path = match path.rfind("/") {
             Some(index) => {
-                path[0..index + 1].to_string()
+                path[0..index].to_string()
             },
             None => {
                 // Special case: "" -> "/""
@@ -228,7 +228,7 @@ fn save(path:String, mime_type:String, data:Vec<u8>, overwrite:bool) -> SaveResu
                             }
                         }
                     };
-                    set_file_info(&path, info);
+                    set_file_info(&path, &info);
 
                     SaveResult {
                         code: SUCCESS,
@@ -362,14 +362,14 @@ mod tests {
     struct TestContext {
     }
     fn setup() -> TestContext {
-        let _ = fs::remove_dir_all("./.test/");
-        let _ = fs::create_dir("./.test/").unwrap();
+        let _ = fs::remove_dir_all(format!("{}/", ROOT)); // "./.test/" for test
+        let _ = fs::create_dir(format!("{}/", ROOT)).unwrap();
         TestContext {
         }
     }
     impl Drop for TestContext {
         fn drop(&mut self) {
-            let _ = fs::remove_dir_all("./.test/");
+            let _ = fs::remove_dir_all(format!("{}/", ROOT));
         }
     }
 
@@ -416,5 +416,61 @@ mod tests {
         // delete (File not found)
         let result = delete("./.test/file.txt".to_string());
         assert_eq!(result, false);
+    }
+
+    #[test]
+    fn test_file_info() {
+        let _context = setup();
+
+        // Root
+        let principalReadable = Principal::from_text("f3umm-tovgf-tf7o6-o3oqc-iqlir-f6ufh-3lvrh-5wlic-6dmnu-gg4q7-6ae").unwrap(); // abandon x 12
+        let principalWritable = Principal::from_text("ymtnq-243kz-shxxs-lfs7t-ihqhn-fntsv-wxvf3-kefpu-27hyr-wdczf-2ae").unwrap(); // ability x 12
+        let file_info = FileInfo {
+            size: 0,
+            created_at: 0,
+            updated_at: 0,
+            mime_type: "".to_string(),
+            sha256: [0; 32],
+            readable: vec![principalReadable.clone()],
+            writable: vec![principalWritable.clone()],
+            signature: None,
+        };
+
+        // Check of root
+        let path = ROOT.to_string();
+        set_file_info(&path, &file_info);
+        assert_eq!(check_read_permission(&principalReadable, &path, Some(&file_info)), true);
+        assert_eq!(check_read_permission(&principalWritable, &path, Some(&file_info)), false);
+        assert_eq!(check_write_permission(&principalReadable, &path, Some(&file_info)), false);
+        assert_eq!(check_write_permission(&principalWritable, &path, Some(&file_info)), true);
+
+        // Check children (no permission found; check parent)
+        let path = format!("{}/child", ROOT);
+        assert_eq!(check_read_permission(&principalReadable, &path, None), true);
+        assert_eq!(check_read_permission(&principalWritable, &path, None), false);
+        assert_eq!(check_write_permission(&principalReadable, &path, None), false);
+        assert_eq!(check_write_permission(&principalWritable, &path, None), true);
+
+        // Check children (has permision)
+        let principalChildOnly = Principal::from_text("xm4xy-wgdl4-jhtba-hmdt7-kocg2-y47gj-wuwwg-oqbva-tydcp-6bvxn-7qe").unwrap(); // child x 12
+        let file_info = FileInfo {
+            size: 0,
+            created_at: 0,
+            updated_at: 0,
+            mime_type: "".to_string(),
+            sha256: [0; 32],
+            readable: vec![principalChildOnly.clone()],
+            writable: vec![principalChildOnly.clone()],
+            signature: None,
+        };
+        set_file_info(&path, &file_info);
+        assert_eq!(check_read_permission(&principalChildOnly, &path, Some(&file_info)), true);
+        assert_eq!(check_write_permission(&principalChildOnly, &path, Some(&file_info)), true);
+        // hasPermission because of parent (Inherited)
+        assert_eq!(check_read_permission(&principalReadable, &path, Some(&file_info)), true);
+        assert_eq!(check_write_permission(&principalWritable, &path, Some(&file_info)), true);
+        // No permission
+        assert_eq!(check_read_permission(&principalWritable, &path, Some(&file_info)), false);
+        assert_eq!(check_write_permission(&principalReadable, &path, Some(&file_info)), false);
     }
 }

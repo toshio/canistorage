@@ -12,15 +12,18 @@ const ERROR_INVALID_PATH: u32 = 3;
 const ERROR_UNKNOWN: u32 = u32::MAX;
 
 #[cfg(test)]
+use std::time::{SystemTime, UNIX_EPOCH};
+
+#[cfg(test)]
 const ROOT: &str = "./.test";
 #[cfg(not(test))]
 const ROOT: &str = "/";
 
 #[derive(CandidType, Serialize, Deserialize)]
 pub struct FileInfo {
-    size: u64,
-    created_at: u64,
-    updated_at: u64,
+    size: u64,  // bytes
+    created_at: u64, // milliseconds
+    updated_at: u64, // milliseconds
     mime_type: String,
     sha256: [u8; 32],
     readable: Vec<Principal>,
@@ -39,6 +42,18 @@ pub struct LoadResult {
     code: u32,
     data: Option<Vec<u8>>,
     message: Option<String>
+}
+
+/// Returns the current time in milliseconds
+#[cfg(test)]
+fn time() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards").as_millis() as u64
+}
+
+/// Returns the current time in milliseconds
+#[cfg(not(test))]
+fn time() -> u64 {
+    ic_cdk::api::time() / 1_000_000 // milliseconds
 }
 
 fn validate_path(path:&String) -> Result<(), String> {
@@ -64,22 +79,31 @@ fn validate_path(path:&String) -> Result<(), String> {
 }
 
 fn file_info_path(path:&String) -> String {
+    if path == "/" {
+        return "`/".to_string();
+    }
     match path.rfind("/") {
         Some(index) => {
             format!("{}`{}", &path[0..index +1], &path[index + 1..])
         },
         None => {
+            // FIXME Not expected
             format!("`{}", path)
         }
     }
 }
 
 fn get_file_info(path:&String) -> Option<FileInfo> {
-    let file = File::open(file_info_path(path)).unwrap();
-    let reader = BufReader::new(file);
-
-    let result = serde_cbor::from_reader(reader).unwrap();
-    Some(result)
+    match File::open(file_info_path(path)) {
+        Ok(file) => {
+            let reader = BufReader::new(file);
+            let result = serde_cbor::from_reader(reader).unwrap();
+            Some(result)
+       },
+        Err(_) => {
+            None
+        }
+    }
 }
 
 fn set_file_info(path:&String, info:FileInfo) -> () {
@@ -130,7 +154,7 @@ fn check_read_permission(principal:&Principal, path:&String, file_info:Option<&F
 fn check_write_permission(principal:&Principal, path:&String, file_info:Option<&FileInfo>) -> bool {
     // First, check writeable of file_info
     if let Some(info) = file_info {
-        if info.writeable.iter().any(|p| p == principal) {
+        if info.writable.iter().any(|p| p == principal) {
             // Found writeable
             return true;
         }
@@ -166,23 +190,43 @@ fn save(path:String, mime_type:String, data:Vec<u8>, overwrite:bool) -> SaveResu
         },
         _ => {}
     };
-    match if overwrite == true {
-        OpenOptions::new().write(true).create(true).truncate(true).open(&path)
-    } else {
-        OpenOptions::new().write(true).create_new(true).open(&path)
-    } {
+
+    // Check whether file exists or not
+    let file_info = get_file_info(&path);
+    if file_info.is_some() && overwrite == false {
+        return SaveResult {
+            code: ERROR_FILE_ALREADY_EXISTS,
+            message: Some("File not found".to_string())
+        }
+    }
+    let file = OpenOptions::new().write(true).create(true).truncate(true).open(&path);
+    match file {
         Ok(mut file) => {
             match file.write_all(&data) {
                 Ok(_) => {
-                    let info = FileInfo {
-                        size: data.len() as u64,
-                        created_at: 0,
-                        updated_at: 0,
-                        mime_type: mime_type,
-                        sha256: Sha256::digest(data).into(),
-                        readable: Vec::new(),
-                        writable: Vec::new(),
-                        signature: None,
+                    let info = match file_info {
+                        Some(mut info) => {
+                            // Update
+                            info.size = data.len() as u64;
+                            info.updated_at = time();
+                            info.mime_type = mime_type;
+                            info.sha256 = Sha256::digest(data).into();
+                            info
+                        },
+                        None => {
+                            // New
+                            let now = time();
+                            FileInfo {
+                                size: data.len() as u64,
+                                created_at: now,
+                                updated_at: now,
+                                mime_type: mime_type,
+                                sha256: Sha256::digest(data).into(),
+                                readable: Vec::new(),
+                                writable: Vec::new(),
+                                signature: None,
+                            }
+                        }
                     };
                     set_file_info(&path, info);
 

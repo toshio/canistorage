@@ -44,6 +44,12 @@ pub struct LoadResult {
     message: Option<String>
 }
 
+#[derive(CandidType, Serialize, Deserialize)]
+pub struct CreateDirectoryResult {
+    code: u32,
+    message: Option<String>,
+}
+
 /// Returns the current time in milliseconds
 #[cfg(test)]
 fn time() -> u64 {
@@ -56,6 +62,12 @@ fn time() -> u64 {
     ic_cdk::api::time() / 1_000_000 // milliseconds
 }
 
+/// validates the specified path
+///
+/// # Arguments
+///
+/// * `path` - path to check
+/// 
 fn validate_path(path:&String) -> Result<(), String> {
     // length
     if path.len() == 0 {
@@ -80,7 +92,7 @@ fn validate_path(path:&String) -> Result<(), String> {
 
 fn file_info_path(path:&String) -> String {
     if path == "/" {
-        return "`/".to_string();
+        return "/`".to_string();
     }
     match path.rfind("/") {
         Some(index) => {
@@ -326,18 +338,32 @@ fn list_files(path:String) -> Vec<String> {
 
 // FIXME result should be more detailed
 #[ic_cdk::update(name="createDirectory")]
-fn create_directory(path:String) -> bool {
+fn create_directory(path:String) -> CreateDirectoryResult {
     match validate_path(&path) {
         Err(e) => {
-            return false;
+            return CreateDirectoryResult {
+                code: ERROR_INVALID_PATH,
+                message: Some(e)
+            }
         },
         _ => {}
     };
+
+    let file_info = get_file_info(&path);
+    if file_info.is_some() {
+        return CreateDirectoryResult {
+            code: ERROR_FILE_ALREADY_EXISTS,  // FIXME Dir or file exists
+            message: Some("Directory already exists".to_string())
+        }
+    }
     match fs::create_dir(&path) {
-        Ok(_) => true,
-        Err(e) => {
-            eprintln!("Error: {:?}", e);
-            false
+        Ok(_) => CreateDirectoryResult {
+            code: SUCCESS,
+            message: None
+        },
+        Err(e) => CreateDirectoryResult {
+            code: ERROR_UNKNOWN,
+            message: Some(format!("{:?}", e))
         }
     }
 }
@@ -362,8 +388,9 @@ mod tests {
     struct TestContext {
     }
     fn setup() -> TestContext {
-        let _ = fs::remove_dir_all(format!("{}/", ROOT)); // "./.test/" for test
-        let _ = fs::create_dir(format!("{}/", ROOT)).unwrap();
+        let _ = fs::remove_dir_all(format!("{}/", ROOT)); // Root is "./.test/" for unit test
+        let _ = fs::remove_file(file_info_path(&ROOT.to_string()));
+        let _ = fs::create_dir(format!("{}/", ROOT));
         TestContext {
         }
     }

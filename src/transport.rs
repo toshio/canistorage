@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::fs;
 use std::fs::{File, OpenOptions};
 use std::io::{BufReader, Read, Write, ErrorKind};
@@ -11,14 +12,59 @@ const ERROR_FILE_ALREADY_EXISTS: u32 = 2;
 const ERROR_INVALID_PATH: u32 = 3;
 const ERROR_UNKNOWN: u32 = u32::MAX;
 
+/////////////////////////////////////////////////////////////////////////////
+// For Unit Test
+/////////////////////////////////////////////////////////////////////////////
 #[cfg(test)]
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[cfg(test)]
 const ROOT: &str = "./.test";
+
+/// Returns the current time in milliseconds
+#[cfg(test)]
+fn time() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards").as_millis() as u64
+}
+
+#[cfg(test)]
+thread_local! {
+    static Caller:RefCell<Principal> = RefCell::new(Principal::anonymous());
+}
+
+#[cfg(test)]
+fn set_caller(principal:Principal) -> () {
+    Caller.with(|caller| {
+        *caller.borrow_mut() = principal;
+    })
+}
+#[cfg(test)]
+fn caller() -> Principal {
+    Caller.with(|caller| {
+        *caller.borrow()
+    })
+}
+
+/////////////////////////////////////////////////////////////////////////////
+// For Production
+/////////////////////////////////////////////////////////////////////////////
 #[cfg(not(test))]
 const ROOT: &str = "/";
 
+/// Returns the current time in milliseconds
+#[cfg(not(test))]
+fn time() -> u64 {
+    ic_cdk::api::time() / 1_000_000 // milliseconds
+}
+
+#[cfg(not(test))]
+fn caller() -> Principal {
+    ic_cdk::api::caller()
+}
+
+/////////////////////////////////////////////////////////////////////////////
+// Data Structures
+/////////////////////////////////////////////////////////////////////////////
 #[derive(CandidType, Serialize, Deserialize)]
 pub struct FileInfo {
     size: u64,  // bytes
@@ -50,17 +96,9 @@ pub struct CreateDirectoryResult {
     message: Option<String>,
 }
 
-/// Returns the current time in milliseconds
-#[cfg(test)]
-fn time() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards").as_millis() as u64
-}
-
-/// Returns the current time in milliseconds
-#[cfg(not(test))]
-fn time() -> u64 {
-    ic_cdk::api::time() / 1_000_000 // milliseconds
-}
+/////////////////////////////////////////////////////////////////////////////
+// Functions
+/////////////////////////////////////////////////////////////////////////////
 
 /// validates the specified path
 ///
@@ -356,6 +394,7 @@ fn create_directory(path:String) -> CreateDirectoryResult {
             message: Some("Directory already exists".to_string())
         }
     }
+//    if (check_write_permission())
     match fs::create_dir(&path) {
         Ok(_) => CreateDirectoryResult {
             code: SUCCESS,
@@ -380,7 +419,9 @@ fn remove_directory(path:String) -> bool {
     }
 }
 
-// Test
+/////////////////////////////////////////////////////////////////////////////
+// Unit Test
+/////////////////////////////////////////////////////////////////////////////
 #[cfg(test)]
 mod tests {
     use super::*;

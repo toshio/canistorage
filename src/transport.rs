@@ -71,13 +71,27 @@ fn caller() -> Principal {
 #[derive(CandidType, Serialize, Deserialize)]
 pub struct FileInfo {
     size: u64,  // bytes
+    creator: Principal,
     created_at: u64, // milliseconds
+    updater: Principal,
     updated_at: u64, // milliseconds
     mime_type: String,
     sha256: [u8; 32],
+    manageable: Vec<Principal>, // Grant or Revoke permission
     readable: Vec<Principal>,
     writable: Vec<Principal>,
     signature: Option<Vec<u8>>,
+}
+
+#[derive(CandidType, Serialize, Deserialize)]
+pub struct AddPermissionResult {
+    code: u32,
+    message: Option<String>,
+}
+#[derive(CandidType, Serialize, Deserialize)]
+pub struct RemovePermissionResult {
+    code: u32,
+    message: Option<String>,
 }
 
 #[derive(CandidType, Serialize, Deserialize)]
@@ -239,6 +253,145 @@ fn check_write_permission(principal:&Principal, path:&String, file_info:Option<&
     }
 }
 
+/// Returns whether the specified path is manageable or not
+///
+/// # Arguments
+///
+/// * `principal` - Principal to check
+/// * `path` - must start with ROOT
+/// * `file_info` - FileInfo
+fn check_manage_permission(principal:&Principal, path:&String, file_info:Option<&FileInfo>) -> bool {
+    // First, check manageable of file_info
+    if let Some(info) = file_info {
+        if info.manageable.iter().any(|p| p == principal) {
+            // Found manageable
+            return true;
+        }
+    }
+    if path == ROOT {
+        // Second, check if ROOT
+        false
+    } else {
+        // Then, check parent file_info recursively
+        let parent_path = match path.rfind("/") {
+            Some(index) => {
+                path[0..index].to_string()
+            },
+            None => {
+                // Special case: "" -> "/""
+                "/".to_string()
+            }
+        };
+        let parent_info = get_file_info(&parent_path);
+        check_manage_permission(principal, &parent_path, parent_info.as_ref())
+    }
+}
+
+#[ic_cdk::update]
+fn add_permission(principal:Principal, path:String, readable:bool, writable:bool) -> AddPermissionResult {
+    match validate_path(&path) {
+        Err(e) => {
+            return AddPermissionResult {
+                code: ERROR_INVALID_PATH,
+                message: Some(e)
+            }
+        },
+        _ => {}
+    };
+
+    let caller = caller();
+    let file_info = get_file_info(&path);
+    if !check_manage_permission(&caller, &path, file_info.as_ref()) {
+        return AddPermissionResult {
+            code: ERROR_PERMISSION_DENIED,
+            message: Some("Permission denied".to_string())
+        };
+    }
+
+    // Check whether file exists or not
+    match file_info {
+        Some(mut new_info) => {
+            if readable {
+                if new_info.readable.binary_search_by_key(&&principal, |p|p).is_err() {
+                    new_info.readable.push(principal);
+                    new_info.readable.sort();
+                }
+            }
+            if writable {
+                if new_info.writable.binary_search_by_key(&&principal, |p|p).is_err() {
+                    new_info.writable.push(principal);
+                    new_info.writable.sort();
+                }
+            }
+            set_file_info(&path, &new_info);
+
+            AddPermissionResult {
+                code: SUCCESS,
+                message: None
+            }
+        },
+        None => AddPermissionResult {
+            code: ERROR_FILE_NOT_FOUND, // TODO File or directory
+            message: Some("File not found".to_string())
+        }
+    }
+}
+
+
+#[ic_cdk::update]
+fn remove_permission(principal:Principal, path:String, readable:bool, writable:bool) -> RemovePermissionResult {
+    match validate_path(&path) {
+        Err(e) => {
+            return RemovePermissionResult {
+                code: ERROR_INVALID_PATH,
+                message: Some(e)
+            }
+        },
+        _ => {}
+    };
+
+    let caller = caller();
+    let file_info = get_file_info(&path);
+    if !check_manage_permission(&caller, &path, file_info.as_ref()) {
+        return RemovePermissionResult {
+            code: ERROR_PERMISSION_DENIED,
+            message: Some("Permission denied".to_string())
+        };
+    }
+
+    // Check whether file exists or not
+    match file_info {
+        Some(mut new_info) => {
+            if readable {
+                match new_info.readable.binary_search_by_key(&&principal, |p|p) {
+                    Ok(index) => {
+                        new_info.readable.remove(index);
+                    },
+                    Err(_) =>{}
+                }
+            }
+            if writable {
+                match new_info.writable.binary_search_by_key(&&principal, |p|p) {
+                    Ok(index) => {
+                        new_info.writable.remove(index);
+                    },
+                    Err(_) =>{}
+                }
+            }
+            set_file_info(&path, &new_info);
+
+            RemovePermissionResult {
+                code: SUCCESS,
+                message: None
+            }
+        },
+        None => RemovePermissionResult {
+            code: ERROR_FILE_NOT_FOUND, // TODO File or directory
+            message: Some("File not found".to_string())
+        }
+    }
+}
+
 /// Uload a file to the canister (less than 2MiB)
 #[ic_cdk::update]
 fn save(path:String, mime_type:String, data:Vec<u8>, overwrite:bool) -> SaveResult {
@@ -287,10 +440,13 @@ fn save(path:String, mime_type:String, data:Vec<u8>, overwrite:bool) -> SaveResu
                             let now = time();
                             FileInfo {
                                 size: data.len() as u64,
+                                creator: caller,
                                 created_at: now,
+                                updater: caller,
                                 updated_at: now,
                                 mime_type: mime_type,
                                 sha256: Sha256::digest(data).into(),
+                                manageable: Vec::new(),
                                 readable: Vec::new(),
                                 writable: Vec::new(),
                                 signature: None,
@@ -406,7 +562,15 @@ fn list_files(path:String) -> ListFilesResult {
 
     let entries = fs::read_dir(path).unwrap();
     let mut files:Vec<String> = entries
-        .map(| entry | entry.unwrap().path().to_str().unwrap().to_string())
+        .map(| entry | {
+            let entry = entry.unwrap();
+            let file_name = entry.path().file_name().unwrap().to_string_lossy().into_owned();
+            if entry.file_type().unwrap().is_dir() { 
+                format!("{}/", file_name)
+            } else {
+                file_name.to_string()
+            }
+        })
         .filter(| file | !file.starts_with("`")) // Remove file_info
         .collect();
     files.sort();
@@ -448,9 +612,26 @@ fn create_directory(path:String) -> CreateDirectoryResult {
     }
 
     match fs::create_dir(&path) {
-        Ok(_) => CreateDirectoryResult {
-            code: SUCCESS,
-            message: None
+        Ok(_) => {
+            // create file_info
+            set_file_info(&path, &FileInfo {
+                size: 0,
+                creator: caller,
+                created_at: time(),
+                updater: caller,
+                updated_at: time(),
+                mime_type: "".to_string(),
+                sha256: [0; 32],
+                manageable: Vec::new(),
+                readable: Vec::new(),
+                writable: Vec::new(),
+                signature: None,
+            });
+            
+            CreateDirectoryResult {
+                code: SUCCESS,
+                message: None
+            }
         },
         Err(e) => CreateDirectoryResult {
             code: ERROR_UNKNOWN,
@@ -469,6 +650,25 @@ fn remove_directory(path:String) -> bool {
             false
         }
     }
+}
+
+pub fn init() {
+    let owner = caller();
+    let now = time();
+    ic_cdk::print(format!("Root Permission to {}", owner));
+    set_file_info(&ROOT.to_string(), &FileInfo {
+        size: 0,
+        creator: owner,
+        created_at: now,
+        updater: owner,
+        updated_at: now,
+        mime_type: "".to_string(),
+        sha256: [0; 32],
+        manageable: vec![owner],
+        readable: vec![owner],
+        writable: vec![owner],
+        signature: None,
+    });    
 }
 
 /////////////////////////////////////////////////////////////////////////////

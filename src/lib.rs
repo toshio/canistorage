@@ -3,9 +3,10 @@
 /// Copyright© 2025 toshio
 ///
 use std::cell::RefCell;
+use candid::Principal;
 use ic_stable_structures::{memory_manager::{MemoryId, MemoryManager}, DefaultMemoryImpl};
 pub mod transport;
-use crate::transport::{SaveResult, LoadResult, CreateDirectoryResult, ListFilesResult}; // for export_candid!()
+use crate::transport::{AddPermissionResult, RemovePermissionResult, SaveResult, LoadResult, CreateDirectoryResult, ListFilesResult}; // for export_candid!()
 
 /// wasi2ic
 const WASI_MEMORY_ID: MemoryId = MemoryId::new(0);
@@ -19,6 +20,7 @@ thread_local! {
 fn init() {
     let wasi_memory = MEMORY_MANAGER.with(|m| m.borrow().get(WASI_MEMORY_ID));
     ic_wasi_polyfill::init_with_memory(&[0u8; 32], &[], wasi_memory);
+    transport::init();
 }
 
 #[ic_cdk::post_upgrade]

@@ -5,7 +5,7 @@
 use std::cell::RefCell;
 use ic_stable_structures::{memory_manager::{MemoryId, MemoryManager}, DefaultMemoryImpl};
 pub mod transport;
-use crate::transport::{SaveResult, LoadResult, CreateDirectoryResult}; // for export_candid!()
+use crate::transport::{SaveResult, LoadResult, CreateDirectoryResult, ListFilesResult}; // for export_candid!()
 
 /// wasi2ic
 const WASI_MEMORY_ID: MemoryId = MemoryId::new(0);

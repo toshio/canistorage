@@ -9,7 +9,10 @@ use sha2::{Sha256, Digest};
 const SUCCESS: u32 = 0;
 const ERROR_FILE_NOT_FOUND: u32 = 1;
 const ERROR_FILE_ALREADY_EXISTS: u32 = 2;
-const ERROR_INVALID_PATH: u32 = 3;
+const ERROR_DIRECTORY_NOT_FOUND: u32 = 3;
+const ERROR_DIRECTORY_ALREADY_EXISTS: u32 = 4;
+const ERROR_INVALID_PATH: u32 = 5;
+const ERROR_PERMISSION_DENIED: u32 = 6;
 const ERROR_UNKNOWN: u32 = u32::MAX;
 
 /////////////////////////////////////////////////////////////////////////////
@@ -29,18 +32,18 @@ fn time() -> u64 {
 
 #[cfg(test)]
 thread_local! {
-    static Caller:RefCell<Principal> = RefCell::new(Principal::anonymous());
+    static CALLER:RefCell<Principal> = RefCell::new(Principal::anonymous());
 }
 
 #[cfg(test)]
 fn set_caller(principal:Principal) -> () {
-    Caller.with(|caller| {
+    CALLER.with(|caller| {
         *caller.borrow_mut() = principal;
     })
 }
 #[cfg(test)]
 fn caller() -> Principal {
-    Caller.with(|caller| {
+    CALLER.with(|caller| {
         *caller.borrow()
     })
 }
@@ -86,14 +89,21 @@ pub struct SaveResult {
 #[derive(CandidType, Serialize, Deserialize)]
 pub struct LoadResult {
     code: u32,
+    message: Option<String>,
     data: Option<Vec<u8>>,
-    message: Option<String>
-}
+} 
 
 #[derive(CandidType, Serialize, Deserialize)]
 pub struct CreateDirectoryResult {
     code: u32,
     message: Option<String>,
+}
+
+#[derive(CandidType, Serialize, Deserialize)]
+pub struct ListFilesResult {
+    code: u32,
+    message: Option<String>,
+    data: Option<Vec<String>>,
 }
 
 /////////////////////////////////////////////////////////////////////////////
@@ -157,6 +167,7 @@ fn get_file_info(path:&String) -> Option<FileInfo> {
 }
 
 fn set_file_info(path:&String, info:&FileInfo) -> () {
+    // TODO Error handling
     let _ = fs::write(file_info_path(path), serde_cbor::to_vec(info).unwrap());
 }
 
@@ -245,9 +256,17 @@ fn save(path:String, mime_type:String, data:Vec<u8>, overwrite:bool) -> SaveResu
     let file_info = get_file_info(&path);
     if file_info.is_some() && overwrite == false {
         return SaveResult {
-            code: ERROR_FILE_ALREADY_EXISTS,
-            message: Some("File not found".to_string())
+            code: ERROR_FILE_ALREADY_EXISTS, // TODO File or directory
+            message: Some("File already exists".to_string())
         }
+    }
+
+    let caller = caller();
+    if !check_write_permission(&caller, &path, file_info.as_ref()) {
+        return SaveResult {
+            code: ERROR_PERMISSION_DENIED,
+            message: Some("Permission denied".to_string())
+        };
     }
     let file = OpenOptions::new().write(true).create(true).truncate(true).open(&path);
     match file {
@@ -293,19 +312,11 @@ fn save(path:String, mime_type:String, data:Vec<u8>, overwrite:bool) -> SaveResu
                 }
             }
         },
-        Err(e) => match e.kind() {
-            ErrorKind::AlreadyExists => {
-                SaveResult {
-                    code: ERROR_FILE_ALREADY_EXISTS,
-                    message: Some("File already exists".to_string())
-                }
-            },
-            _ => {
-                eprintln!("Error: {:?}", e);
-                SaveResult {
-                    code: ERROR_UNKNOWN,
-                    message: Some(format!("{:?}", e))
-                }
+        Err(e) => {
+            eprintln!("Error: {:?}", e);
+            SaveResult {
+                code: ERROR_UNKNOWN,
+                message: Some(format!("{:?}", e))
             }
         }
     }
@@ -320,24 +331,24 @@ fn load(path:String) -> LoadResult {
             let size = file.read_to_end(&mut buffer);
             LoadResult {
                 code: SUCCESS,
-                data: Some(buffer),
                 message: None,
+                data: Some(buffer)
             }
         },
         Err(e) => match e.kind() {
             ErrorKind::NotFound => {
                 LoadResult {
                     code: ERROR_FILE_NOT_FOUND,
-                    data: None,
                     message: Some("File not found".to_string()),
+                    data: None
                 }
             },
             _ => {
                 eprintln!("Error: {:?}", e);
                 LoadResult {
                     code: ERROR_UNKNOWN,
-                    data: None,
                     message: Some(format!("{:?}", e)),
+                    data: None
                 }
             }
         }
@@ -363,15 +374,47 @@ fn delete(path:String) -> bool {
 
 // FIXME result should be more detailed
 #[ic_cdk::query(name="listFiles")]
-fn list_files(path:String) -> Vec<String> {
-    let paths = fs::read_dir(path).unwrap();
-    let mut files = Vec::new();
-    for path in paths {
-        let path = path.unwrap().path();
-        let path = path.to_str().unwrap().to_string();
-        files.push(path);
+fn list_files(path:String) -> ListFilesResult {
+    match validate_path(&path) {
+        Err(e) => {
+            return ListFilesResult {
+                code: ERROR_INVALID_PATH,
+                message: Some(e),
+                data: None
+            }
+        },
+        _ => {}
+    };
+
+    let file_info = get_file_info(&path);
+    let caller = caller();
+    if !check_read_permission(&caller, &path, file_info.as_ref()) {
+        return ListFilesResult {
+            code: ERROR_PERMISSION_DENIED,
+            message: Some("Permission denied".to_string()),
+            data: None
+        }
     }
-    files
+
+    if file_info.is_none() {
+        return ListFilesResult {
+            code: ERROR_DIRECTORY_NOT_FOUND,
+            message: Some("Directory not found".to_string()),
+            data: None
+        }
+    }
+
+    let entries = fs::read_dir(path).unwrap();
+    let mut files:Vec<String> = entries
+        .map(| entry | entry.unwrap().path().to_str().unwrap().to_string())
+        .filter(| file | !file.starts_with("`")) // Remove file_info
+        .collect();
+    files.sort();
+    ListFilesResult {
+        code: SUCCESS,
+        message: None,
+        data: Some(files)
+    }
 }
 
 // FIXME result should be more detailed
@@ -387,14 +430,23 @@ fn create_directory(path:String) -> CreateDirectoryResult {
         _ => {}
     };
 
+    // Check write permission
+    let caller = caller();
     let file_info = get_file_info(&path);
+    if !check_write_permission(&caller, &path, file_info.as_ref()) {
+        return CreateDirectoryResult {
+            code: ERROR_PERMISSION_DENIED,
+            message: Some("Permission denied".to_string())
+        }
+    }
+
     if file_info.is_some() {
         return CreateDirectoryResult {
             code: ERROR_FILE_ALREADY_EXISTS,  // FIXME Dir or file exists
             message: Some("Directory already exists".to_string())
         }
     }
-//    if (check_write_permission())
+
     match fs::create_dir(&path) {
         Ok(_) => CreateDirectoryResult {
             code: SUCCESS,
@@ -432,12 +484,23 @@ mod tests {
         let _ = fs::remove_dir_all(format!("{}/", ROOT)); // Root is "./.test/" for unit test
         let _ = fs::remove_file(file_info_path(&ROOT.to_string()));
         let _ = fs::create_dir(format!("{}/", ROOT));
+        set_file_info(&ROOT.to_string(), &FileInfo {
+            size: 0,
+            created_at: 0,
+            updated_at: 0,
+            mime_type: "".to_string(),
+            sha256: [0; 32],
+            readable: vec![caller()],
+            writable: vec![caller()],
+            signature: None,
+        });
         TestContext {
         }
     }
     impl Drop for TestContext {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(format!("{}/", ROOT));
+            let _ = fs::remove_file(file_info_path(&ROOT.to_string()));
         }
     }
 
@@ -491,54 +554,61 @@ mod tests {
         let _context = setup();
 
         // Root
-        let principalReadable = Principal::from_text("f3umm-tovgf-tf7o6-o3oqc-iqlir-f6ufh-3lvrh-5wlic-6dmnu-gg4q7-6ae").unwrap(); // abandon x 12
-        let principalWritable = Principal::from_text("ymtnq-243kz-shxxs-lfs7t-ihqhn-fntsv-wxvf3-kefpu-27hyr-wdczf-2ae").unwrap(); // ability x 12
+        let principal_readable = Principal::from_text("f3umm-tovgf-tf7o6-o3oqc-iqlir-f6ufh-3lvrh-5wlic-6dmnu-gg4q7-6ae").unwrap(); // abandon x 12
+        let principal_writable = Principal::from_text("ymtnq-243kz-shxxs-lfs7t-ihqhn-fntsv-wxvf3-kefpu-27hyr-wdczf-2ae").unwrap(); // ability x 12
         let file_info = FileInfo {
             size: 0,
             created_at: 0,
             updated_at: 0,
             mime_type: "".to_string(),
             sha256: [0; 32],
-            readable: vec![principalReadable.clone()],
-            writable: vec![principalWritable.clone()],
+            readable: vec![principal_readable.clone()],
+            writable: vec![principal_writable.clone()],
             signature: None,
         };
 
         // Check of root
         let path = ROOT.to_string();
         set_file_info(&path, &file_info);
-        assert_eq!(check_read_permission(&principalReadable, &path, Some(&file_info)), true);
-        assert_eq!(check_read_permission(&principalWritable, &path, Some(&file_info)), false);
-        assert_eq!(check_write_permission(&principalReadable, &path, Some(&file_info)), false);
-        assert_eq!(check_write_permission(&principalWritable, &path, Some(&file_info)), true);
+        assert_eq!(check_read_permission(&principal_readable, &path, Some(&file_info)), true);
+        assert_eq!(check_read_permission(&principal_writable, &path, Some(&file_info)), false);
+        assert_eq!(check_write_permission(&principal_readable, &path, Some(&file_info)), false);
+        assert_eq!(check_write_permission(&principal_writable, &path, Some(&file_info)), true);
 
         // Check children (no permission found; check parent)
         let path = format!("{}/child", ROOT);
-        assert_eq!(check_read_permission(&principalReadable, &path, None), true);
-        assert_eq!(check_read_permission(&principalWritable, &path, None), false);
-        assert_eq!(check_write_permission(&principalReadable, &path, None), false);
-        assert_eq!(check_write_permission(&principalWritable, &path, None), true);
+        assert_eq!(check_read_permission(&principal_readable, &path, None), true);
+        assert_eq!(check_read_permission(&principal_writable, &path, None), false);
+        assert_eq!(check_write_permission(&principal_readable, &path, None), false);
+        assert_eq!(check_write_permission(&principal_writable, &path, None), true);
 
         // Check children (has permision)
-        let principalChildOnly = Principal::from_text("xm4xy-wgdl4-jhtba-hmdt7-kocg2-y47gj-wuwwg-oqbva-tydcp-6bvxn-7qe").unwrap(); // child x 12
+        let principal_child_only = Principal::from_text("xm4xy-wgdl4-jhtba-hmdt7-kocg2-y47gj-wuwwg-oqbva-tydcp-6bvxn-7qe").unwrap(); // child x 12
         let file_info = FileInfo {
             size: 0,
             created_at: 0,
             updated_at: 0,
             mime_type: "".to_string(),
             sha256: [0; 32],
-            readable: vec![principalChildOnly.clone()],
-            writable: vec![principalChildOnly.clone()],
+            readable: vec![principal_child_only.clone()],
+            writable: vec![principal_child_only.clone()],
             signature: None,
         };
         set_file_info(&path, &file_info);
-        assert_eq!(check_read_permission(&principalChildOnly, &path, Some(&file_info)), true);
-        assert_eq!(check_write_permission(&principalChildOnly, &path, Some(&file_info)), true);
+        assert_eq!(check_read_permission(&principal_child_only, &path, Some(&file_info)), true);
+        assert_eq!(check_write_permission(&principal_child_only, &path, Some(&file_info)), true);
         // hasPermission because of parent (Inherited)
-        assert_eq!(check_read_permission(&principalReadable, &path, Some(&file_info)), true);
-        assert_eq!(check_write_permission(&principalWritable, &path, Some(&file_info)), true);
+        assert_eq!(check_read_permission(&principal_readable, &path, Some(&file_info)), true);
+        assert_eq!(check_write_permission(&principal_writable, &path, Some(&file_info)), true);
         // No permission
-        assert_eq!(check_read_permission(&principalWritable, &path, Some(&file_info)), false);
-        assert_eq!(check_write_permission(&principalReadable, &path, Some(&file_info)), false);
+        assert_eq!(check_read_permission(&principal_writable, &path, Some(&file_info)), false);
+        assert_eq!(check_write_permission(&principal_readable, &path, Some(&file_info)), false);
     }
+
+    #[test]
+    fn test_list_files() {
+        let _context = setup();
+    }
+
+
 }

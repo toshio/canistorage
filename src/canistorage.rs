@@ -105,7 +105,13 @@ pub struct LoadResult {
     code: u32,
     message: Option<String>,
     data: Option<Vec<u8>>,
-} 
+}
+
+#[derive(CandidType, Serialize, Deserialize)]
+pub struct DeleteResult {
+    code: u32,
+    message: Option<String>,
+}
 
 #[derive(CandidType, Serialize, Deserialize)]
 pub struct CreateDirectoryResult {
@@ -183,6 +189,11 @@ fn get_file_info(path:&String) -> Option<FileInfo> {
 fn set_file_info(path:&String, info:&FileInfo) -> () {
     // TODO Error handling
     let _ = fs::write(file_info_path(path), serde_cbor::to_vec(info).unwrap());
+}
+
+fn delete_file_info(path:&String) -> () {
+    // TODO Error handling
+    let _ = fs::remove_file(file_info_path(path));
 }
 
 /// Returns whether the specified path is readable or not
@@ -395,6 +406,7 @@ fn remove_permission(principal:Principal, path:String, readable:bool, writable:b
 /// Uload a file to the canister (less than 2MiB)
 #[ic_cdk::update]
 fn save(path:String, mime_type:String, data:Vec<u8>, overwrite:bool) -> SaveResult {
+    // First, check path 
     match validate_path(&path) {
         Err(e) => {
             return SaveResult {
@@ -405,8 +417,17 @@ fn save(path:String, mime_type:String, data:Vec<u8>, overwrite:bool) -> SaveResu
         _ => {}
     };
 
-    // Check whether file exists or not
+    // Second, check permission
+    let caller = caller();
     let file_info = get_file_info(&path);
+    if !check_write_permission(&caller, &path, file_info.as_ref()) {
+        return SaveResult {
+            code: ERROR_PERMISSION_DENIED,
+            message: Some("Permission denied".to_string())
+        };
+    }
+
+    // Third, check whether file exists or not
     if file_info.is_some() && overwrite == false {
         return SaveResult {
             code: ERROR_FILE_ALREADY_EXISTS, // TODO File or directory
@@ -414,13 +435,6 @@ fn save(path:String, mime_type:String, data:Vec<u8>, overwrite:bool) -> SaveResu
         }
     }
 
-    let caller = caller();
-    if !check_write_permission(&caller, &path, file_info.as_ref()) {
-        return SaveResult {
-            code: ERROR_PERMISSION_DENIED,
-            message: Some("Permission denied".to_string())
-        };
-    }
     let file = OpenOptions::new().write(true).create(true).truncate(true).open(&path);
     match file {
         Ok(mut file) => {
@@ -480,6 +494,38 @@ fn save(path:String, mime_type:String, data:Vec<u8>, overwrite:bool) -> SaveResu
 
 #[ic_cdk::query]
 fn load(path:String) -> LoadResult {
+    // First, check path 
+    match validate_path(&path) {
+        Err(e) => {
+            return LoadResult {
+                code: ERROR_INVALID_PATH,
+                message: Some(e),
+                data: None
+            }
+        },
+        _ => {}
+    };
+
+    // Second, check permission
+    let caller = caller();
+    let file_info = get_file_info(&path);
+    if !check_read_permission(&caller, &path, file_info.as_ref()) {
+        return LoadResult {
+            code: ERROR_PERMISSION_DENIED,
+            message: Some("Permission denied".to_string()),
+            data: None
+        };
+    }
+
+    // Third, check whether file exists or not
+    if file_info.is_none() {
+        return LoadResult {
+            code: ERROR_FILE_NOT_FOUND,
+            message: Some("File not found".to_string()),
+            data: None
+        }
+    }
+
     // FIXME check file size before read to 
     match File::open(path) {
         Ok(mut file) => {
@@ -491,7 +537,7 @@ fn load(path:String) -> LoadResult {
                 data: Some(buffer)
             }
         },
-        Err(e) => match e.kind() {
+        Err(e) => match e.kind() { // Not expected
             ErrorKind::NotFound => {
                 LoadResult {
                     code: ERROR_FILE_NOT_FOUND,
@@ -513,16 +559,45 @@ fn load(path:String) -> LoadResult {
 
 // FIXME result should be more detailed
 #[ic_cdk::update(name="delete")]
-fn delete(path:String) -> bool {
-    match fs::remove_file(path) {
-        Ok(_) => true,
-        Err(e) => match e.kind() {
-            ErrorKind::NotFound => {
-                false
+fn delete(path:String) -> DeleteResult {
+    // First, check path 
+    match validate_path(&path) {
+        Err(e) => {
+            return DeleteResult {
+                code: ERROR_INVALID_PATH,
+                message: Some(e)
+            }
+        },
+        _ => {}
+    };
+
+    // Second, check permission
+    let caller = caller();
+    let file_info = get_file_info(&path);
+    if !check_write_permission(&caller, &path, file_info.as_ref()) {
+        return DeleteResult {
+            code: ERROR_PERMISSION_DENIED,
+            message: Some("Permission denied".to_string())
+        };
+    }
+
+    match fs::remove_file(&path) {
+        Ok(_) => {
+            delete_file_info(&path);
+
+            DeleteResult {
+                code: SUCCESS,
+                message: None
+            }
+        },
+        Err(e) => match e.kind() {   
+            ErrorKind::NotFound => DeleteResult {
+                code: ERROR_FILE_NOT_FOUND,
+                message: Some("File not found".to_string()),
             },
-            _=> {
-                // FIXME: should be error
-                false
+            _=> DeleteResult {
+                code: ERROR_UNKNOWN,
+                message: Some(format!("{:?}", e)),
             },
         }
     }
@@ -686,10 +761,13 @@ mod tests {
         let _ = fs::create_dir(format!("{}/", ROOT));
         set_file_info(&ROOT.to_string(), &FileInfo {
             size: 0,
+            creator: caller(),
             created_at: 0,
+            updater: caller(),
             updated_at: 0,
             mime_type: "".to_string(),
             sha256: [0; 32],
+            manageable: vec![caller()],
             readable: vec![caller()],
             writable: vec![caller()],
             signature: None,
@@ -742,11 +820,11 @@ mod tests {
 
         // delete
         let result = delete("./.test/file.txt".to_string());
-        assert_eq!(result, true);
+        assert_eq!(result.code, SUCCESS);
 
         // delete (File not found)
         let result = delete("./.test/file.txt".to_string());
-        assert_eq!(result, false);
+        assert_eq!(result.code, ERROR_FILE_NOT_FOUND);
     }
 
     #[test]
@@ -758,10 +836,13 @@ mod tests {
         let principal_writable = Principal::from_text("ymtnq-243kz-shxxs-lfs7t-ihqhn-fntsv-wxvf3-kefpu-27hyr-wdczf-2ae").unwrap(); // ability x 12
         let file_info = FileInfo {
             size: 0,
+            creator: caller(),
             created_at: 0,
+            updater: caller(),
             updated_at: 0,
             mime_type: "".to_string(),
             sha256: [0; 32],
+            manageable: Vec::new(),
             readable: vec![principal_readable.clone()],
             writable: vec![principal_writable.clone()],
             signature: None,
@@ -786,10 +867,13 @@ mod tests {
         let principal_child_only = Principal::from_text("xm4xy-wgdl4-jhtba-hmdt7-kocg2-y47gj-wuwwg-oqbva-tydcp-6bvxn-7qe").unwrap(); // child x 12
         let file_info = FileInfo {
             size: 0,
+            creator: caller(),
             created_at: 0,
+            updater: caller(),
             updated_at: 0,
             mime_type: "".to_string(),
             sha256: [0; 32],
+            manageable: Vec::new(),
             readable: vec![principal_child_only.clone()],
             writable: vec![principal_child_only.clone()],
             signature: None,
@@ -809,6 +893,4 @@ mod tests {
     fn test_list_files() {
         let _context = setup();
     }
-
-
 }

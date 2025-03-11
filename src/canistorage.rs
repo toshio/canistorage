@@ -427,6 +427,8 @@ fn save(path:String, mime_type:String, data:Vec<u8>, overwrite:bool) -> SaveResu
         };
     }
 
+    // TODO save as temp, and then rename it
+
     // Third, check whether file exists or not
     if file_info.is_some() && overwrite == false {
         return SaveResult {

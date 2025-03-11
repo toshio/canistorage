@@ -299,7 +299,7 @@ fn check_manage_permission(principal:&Principal, path:&String, file_info:Option<
 }
 
 #[ic_cdk::update]
-fn add_permission(principal:Principal, path:String, readable:bool, writable:bool) -> AddPermissionResult {
+fn add_permission(principal:Principal, path:String, manageable:bool, readable:bool, writable:bool) -> AddPermissionResult {
     match validate_path(&path) {
         Err(e) => {
             return AddPermissionResult {
@@ -322,6 +322,12 @@ fn add_permission(principal:Principal, path:String, readable:bool, writable:bool
     // Check whether file exists or not
     match file_info {
         Some(mut new_info) => {
+            if manageable {
+                if new_info.manageable.binary_search_by_key(&&principal, |p|p).is_err() {
+                    new_info.manageable.push(principal);
+                    new_info.manageable.sort();
+                }
+            }
             if readable {
                 if new_info.readable.binary_search_by_key(&&principal, |p|p).is_err() {
                     new_info.readable.push(principal);
@@ -350,7 +356,7 @@ fn add_permission(principal:Principal, path:String, readable:bool, writable:bool
 
 
 #[ic_cdk::update]
-fn remove_permission(principal:Principal, path:String, readable:bool, writable:bool) -> RemovePermissionResult {
+fn remove_permission(principal:Principal, path:String, manageable:bool, readable:bool, writable:bool) -> RemovePermissionResult {
     match validate_path(&path) {
         Err(e) => {
             return RemovePermissionResult {
@@ -373,6 +379,14 @@ fn remove_permission(principal:Principal, path:String, readable:bool, writable:b
     // Check whether file exists or not
     match file_info {
         Some(mut new_info) => {
+            if manageable {
+                match new_info.manageable.binary_search_by_key(&&principal, |p|p) {
+                    Ok(index) => {
+                        new_info.manageable.remove(index);
+                    },
+                    Err(_) =>{}
+                }
+            }
             if readable {
                 match new_info.readable.binary_search_by_key(&&principal, |p|p) {
                     Ok(index) => {
@@ -894,5 +908,17 @@ mod tests {
     #[test]
     fn test_list_files() {
         let _context = setup();
+
     }
+
+    #[test]
+    fn test_add_permission() {
+        let _context = setup();
+    }
+
+    #[test]
+    fn test_remove_permission() {
+        let _context = setup();
+    }
+
 }

@@ -158,6 +158,7 @@ fn validate_path(path:&String) -> Result<(), String> {
     Ok(())
 }
 
+/// returns file info path (metadata of file)
 fn file_info_path(path:&String) -> String {
     if path == "/" {
         return "/`".to_string();
@@ -194,6 +195,22 @@ fn set_file_info(path:&String, info:&FileInfo) -> () {
 fn delete_file_info(path:&String) -> () {
     // TODO Error handling
     let _ = fs::remove_file(file_info_path(path));
+}
+
+// returns temporary path for saving a file
+fn temp_path(path:&String) -> String {
+    if path == "/" {
+        return "/``".to_string();
+    }
+    match path.rfind("/") {
+        Some(index) => {
+            format!("{}``{}", &path[0..index +1], &path[index + 1..])
+        },
+        None => {
+            // FIXME Not expected
+            format!("``{}", path)
+        }
+    }
 }
 
 /// Returns whether the specified path is readable or not
@@ -420,7 +437,7 @@ fn remove_permission(principal:Principal, path:String, manageable:bool, readable
 /// Uload a file to the canister (less than 2MiB)
 #[ic_cdk::update]
 fn save(path:String, mime_type:String, data:Vec<u8>, overwrite:bool) -> SaveResult {
-    // First, check path 
+    // First, check path
     match validate_path(&path) {
         Err(e) => {
             return SaveResult {
@@ -441,8 +458,6 @@ fn save(path:String, mime_type:String, data:Vec<u8>, overwrite:bool) -> SaveResu
         };
     }
 
-    // TODO save as temp, and then rename it
-
     // Third, check whether file exists or not
     if file_info.is_some() && overwrite == false {
         return SaveResult {
@@ -451,7 +466,10 @@ fn save(path:String, mime_type:String, data:Vec<u8>, overwrite:bool) -> SaveResu
         }
     }
 
-    let file = OpenOptions::new().write(true).create(true).truncate(true).open(&path);
+    // TODO save as temp, and then rename it
+    let temp_path = temp_path(&path);
+
+    let file = OpenOptions::new().write(true).create(true).truncate(true).open(&temp_path);
     match file {
         Ok(mut file) => {
             match file.write_all(&data) {
@@ -483,11 +501,19 @@ fn save(path:String, mime_type:String, data:Vec<u8>, overwrite:bool) -> SaveResu
                             }
                         }
                     };
-                    set_file_info(&path, &info);
 
-                    SaveResult {
-                        code: SUCCESS,
-                        message: None
+                    match fs::rename(&temp_path, &path) {
+                        Ok(_) => {
+                            set_file_info(&path, &info);
+                            SaveResult {
+                                code: SUCCESS,
+                                message: None
+                            }
+                        },
+                        Err(e) => SaveResult {
+                            code: ERROR_UNKNOWN,
+                            message: Some("Failed to write data".to_string())
+                        }
                     }
                 },
                 Err(e) => match e.kind() {

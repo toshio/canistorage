@@ -16,6 +16,10 @@ Internet上にオープン仕様の分散型ストレージを開発するプロ
 
 ## マイルストーン
 
+| バージョン | 概要                                     |
+| :--------- | :--------------------------------------- |
+| 0.1.0      | PoC 基本的なファイル操作と権限制御を実装 |
+
 ## ビルド & ローカル実行
 
 ### Setup
@@ -44,3 +48,14 @@ $ dfx deploy
 $ dfx canister call canistorage version
 ("canistorage 0.0.0")
 ```
+
+
+
+###
+
+```bash
+$ dfx canister call canistorage createDirectory '("/dir1")'
+$ dfx canister call canistorage save '("/file", "text/plain", vec {31; 32; 33}, true)'
+```
+
+$ dfx canister call canistorage add_permission '(principal "2vxsx-fae", "/", true, true)'

@@ -7,6 +7,7 @@ use candid::Principal;
 use ic_stable_structures::{memory_manager::{MemoryId, MemoryManager}, DefaultMemoryImpl};
 pub mod canistorage;
 use crate::canistorage::{
+    Error,
     AddPermissionResult,
     RemovePermissionResult,
     SaveResult,
@@ -16,6 +17,7 @@ use crate::canistorage::{
     DeleteDirectoryResult,
     ListFilesResult,
     HasPermissionResult,
+    Info,
 }; // for export_candid!()
 
 /// wasi2ic

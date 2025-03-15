@@ -10,6 +10,8 @@ use serde::{Serialize, Deserialize};
 use candid::{CandidType, Principal};
 use sha2::{Sha256, Digest};
 
+const MIMETYPE_DIRECTORY: &str = "canistorage/directory";
+
 const SUCCESS: u32 = 0;
 const ERROR_FILE_NOT_FOUND: u32 = 1;
 const ERROR_FILE_ALREADY_EXISTS: u32 = 2;
@@ -72,6 +74,20 @@ fn caller() -> Principal {
 /////////////////////////////////////////////////////////////////////////////
 // Data Structures
 /////////////////////////////////////////////////////////////////////////////
+#[derive(CandidType, Serialize, Deserialize)]
+pub struct Error {
+    code:u32,
+    message: String,
+}
+macro_rules! Error {
+    ($code:expr, $message:expr) => {
+        Err(Error {
+            code: $code,
+            message: $message.to_string(),
+        })
+    };
+}
+
 #[derive(CandidType, Serialize, Deserialize)]
 pub struct FileInfo {
     size: u64,  // bytes
@@ -144,6 +160,18 @@ pub struct HasPermissionResult {
     writable: bool,
     readable: bool,
 }
+
+#[derive(CandidType, Serialize, Deserialize)]
+pub struct Info {
+    size: u64,  // bytes
+    creator: Principal,
+    created_at: u64, // milliseconds
+    updater: Principal,
+    updated_at: u64, // milliseconds
+    mime_type: String,
+    sha256: [u8; 32],
+}
+
 
 /////////////////////////////////////////////////////////////////////////////
 // Functions
@@ -756,7 +784,7 @@ fn create_directory(path:String) -> CreateDirectoryResult {
                 created_at: time(),
                 updater: caller,
                 updated_at: time(),
-                mime_type: "".to_string(),
+                mime_type: MIMETYPE_DIRECTORY.to_string(),
                 sha256: [0; 32],
                 manageable: Vec::new(),
                 readable: Vec::new(),
@@ -820,7 +848,37 @@ fn delete_directory(path:String) -> DeleteDirectoryResult {
     }
 }
 
-#[ic_cdk::update(name="hasPermission")]
+#[ic_cdk::query(name="getInfo")]
+fn get_info(path:String) -> Result<Info,Error> {
+    match validate_path(&path) {
+        Err(e) => {
+            return Error!(ERROR_INVALID_PATH, format!("{:?}", e));
+        },
+        _ => {}
+    };
+
+    let file_info = get_file_info(&path);
+    let caller = caller();
+    if !check_read_permission(&caller, &path, file_info.as_ref()) {
+        return Error!(ERROR_PERMISSION_DENIED, "Permission denied");
+    }
+
+    match file_info {
+        Some(info) => Ok(Info {
+            size: info.size,
+            creator: info.creator,
+            created_at: info.created_at,
+            updater: info.updater,
+            updated_at: info.updated_at,
+            mime_type: info.mime_type,
+            sha256: info.sha256
+        }),
+        None => Error!(ERROR_FILE_NOT_FOUND, "File not found")
+    }
+}
+
+
+#[ic_cdk::query(name="hasPermission")]
 fn has_permission(path:String) -> HasPermissionResult {
     match validate_path(&path) {
         Err(e) => {
@@ -858,7 +916,7 @@ pub fn init() {
         created_at: now,
         updater: owner,
         updated_at: now,
-        mime_type: "".to_string(),
+        mime_type: MIMETYPE_DIRECTORY.to_string(),
         sha256: [0; 32],
         manageable: vec![owner],
         readable: vec![owner],
@@ -886,7 +944,7 @@ mod tests {
             created_at: 0,
             updater: caller(),
             updated_at: 0,
-            mime_type: "".to_string(),
+            mime_type: MIMETYPE_DIRECTORY.to_string(),
             sha256: [0; 32],
             manageable: vec![caller()],
             readable: vec![caller()],

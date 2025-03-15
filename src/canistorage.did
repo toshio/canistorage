@@ -1,40 +1,33 @@
-type AddPermissionResult = record { code : nat32; message : opt text };
-type DeleteResult = record { code : nat32; message : opt text };
 type Error = record { code : nat32; message : text };
-type HasPermissionResult = record {
-  writable : bool;
-  code : nat32;
-  readable : bool;
-  message : opt text;
-  manageable : bool;
-};
 type Info = record {
   updated_at : nat64;
   creator : principal;
-  sha256 : blob;
+  sha256 : opt blob;
   size : nat64;
   mime_type : text;
   created_at : nat64;
   updater : principal;
 };
-type ListFilesResult = record {
-  code : nat32;
-  data : opt vec text;
-  message : opt text;
+type Permission = record {
+  writable : bool;
+  readable : bool;
+  manageable : bool;
 };
-type LoadResult = record { code : nat32; data : opt blob; message : opt text };
-type Result = variant { Ok : Info; Err : Error };
-type SaveResult = record { code : nat32; message : opt text };
+type Result = variant { Ok; Err : Error };
+type Result_1 = variant { Ok : Info; Err : Error };
+type Result_2 = variant { Ok : Permission; Err : Error };
+type Result_3 = variant { Ok : vec text; Err : Error };
+type Result_4 = variant { Ok : blob; Err : Error };
 service : () -> {
-  add_permission : (principal, text, bool, bool, bool) -> (AddPermissionResult);
-  createDirectory : (text) -> (AddPermissionResult);
-  delete : (text) -> (DeleteResult);
-  deleteDirectory : (text) -> (DeleteResult);
-  getInfo : (text) -> (Result) query;
-  hasPermission : (text) -> (HasPermissionResult) query;
-  listFiles : (text) -> (ListFilesResult) query;
-  load : (text) -> (LoadResult) query;
-  remove_permission : (principal, text, bool, bool, bool) -> (DeleteResult);
-  save : (text, text, blob, bool) -> (SaveResult);
+  add_permission : (principal, text, bool, bool, bool) -> (Result);
+  createDirectory : (text) -> (Result);
+  delete : (text) -> (Result);
+  deleteDirectory : (text) -> (Result);
+  getInfo : (text) -> (Result_1) query;
+  hasPermission : (text) -> (Result_2) query;
+  listFiles : (text) -> (Result_3) query;
+  load : (text) -> (Result_4) query;
+  remove_permission : (principal, text, bool, bool, bool) -> (Result);
+  save : (text, text, blob, bool) -> (Result);
   version : () -> (text) query;
 }

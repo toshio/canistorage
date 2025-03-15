@@ -6,7 +6,17 @@ use std::cell::RefCell;
 use candid::Principal;
 use ic_stable_structures::{memory_manager::{MemoryId, MemoryManager}, DefaultMemoryImpl};
 pub mod canistorage;
-use crate::canistorage::{AddPermissionResult, RemovePermissionResult, SaveResult, LoadResult, DeleteResult, CreateDirectoryResult, ListFilesResult}; // for export_candid!()
+use crate::canistorage::{
+    AddPermissionResult,
+    RemovePermissionResult,
+    SaveResult,
+    LoadResult,
+    DeleteResult,
+    CreateDirectoryResult,
+    DeleteDirectoryResult,
+    ListFilesResult,
+    HasPermissionResult,
+}; // for export_candid!()
 
 /// wasi2ic
 const WASI_MEMORY_ID: MemoryId = MemoryId::new(0);

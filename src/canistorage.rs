@@ -1,3 +1,7 @@
+/// Canistorage
+/// 
+/// Copyright© 2025 toshio
+///
 use std::cell::RefCell;
 use std::fs;
 use std::fs::{File, OpenOptions};
@@ -120,10 +124,25 @@ pub struct CreateDirectoryResult {
 }
 
 #[derive(CandidType, Serialize, Deserialize)]
+pub struct DeleteDirectoryResult {
+    code: u32,
+    message: Option<String>,
+}
+
+#[derive(CandidType, Serialize, Deserialize)]
 pub struct ListFilesResult {
     code: u32,
     message: Option<String>,
     data: Option<Vec<String>>,
+}
+
+#[derive(CandidType, Serialize, Deserialize)]
+pub struct HasPermissionResult {
+    code: u32,
+    message: Option<String>,
+    manageable: bool,
+    writable: bool,
+    readable: bool,
 }
 
 /////////////////////////////////////////////////////////////////////////////
@@ -512,14 +531,14 @@ fn save(path:String, mime_type:String, data:Vec<u8>, overwrite:bool) -> SaveResu
                         },
                         Err(e) => SaveResult {
                             code: ERROR_UNKNOWN,
-                            message: Some("Failed to write data".to_string())
+                            message: Some(format!("{:?}", e))
                         }
                     }
                 },
                 Err(e) => match e.kind() {
                     _ => SaveResult {
                         code: ERROR_UNKNOWN,
-                        message: Some("Failed to write data".to_string())
+                        message: Some(format!("{:?}", e))
                     }
                 }
             }
@@ -758,14 +777,74 @@ fn create_directory(path:String) -> CreateDirectoryResult {
 }
 
 // FIXME result should be more detailed
-#[ic_cdk::update(name="removeDirectory")]
-fn remove_directory(path:String) -> bool {
-    match fs::remove_dir(path) {
-        Ok(_) => true,
+#[ic_cdk::update(name="deleteDirectory")]
+fn delete_directory(path:String) -> DeleteDirectoryResult {
+    match validate_path(&path) {
         Err(e) => {
-            eprintln!("Error: {:?}", e);
-            false
+            return DeleteDirectoryResult {
+                code: ERROR_INVALID_PATH,
+                message: Some(e),
+            }
+        },
+        _ => {}
+    };
+
+    let file_info = get_file_info(&path);
+    let caller = caller();
+    if !check_read_permission(&caller, &path, file_info.as_ref()) {
+        return DeleteDirectoryResult {
+            code: ERROR_PERMISSION_DENIED,
+            message: Some("Permission denied".to_string()),
         }
+    }
+
+    if file_info.is_none() {
+        return DeleteDirectoryResult {
+            code: ERROR_DIRECTORY_NOT_FOUND,
+            message: Some("Directory not found".to_string()),
+        }
+    }
+
+    match fs::remove_dir(&path) {
+        Ok(_) => {
+            delete_file_info(&path);
+            DeleteDirectoryResult {
+                code: SUCCESS,
+                message: None
+            }
+        },
+        Err(e) => DeleteDirectoryResult {
+            code: ERROR_UNKNOWN,
+            message: Some(format!("{:?}", e)),
+        }
+    }
+}
+
+#[ic_cdk::update(name="hasPermission")]
+fn hasPermission(path:String) -> HasPermissionResult {
+    match validate_path(&path) {
+        Err(e) => {
+            return HasPermissionResult {
+                code: ERROR_INVALID_PATH,
+                message: Some(e),
+                manageable: false,
+                readable: false,
+                writable: false,
+            }
+        },
+        _ => {}
+    };
+
+    let file_info = get_file_info(&path);
+    let caller = caller();
+
+    // TODO optimize algorithm
+    HasPermissionResult {
+        code: SUCCESS,
+        message: None,
+        manageable: check_manage_permission(&caller, &path, file_info.as_ref()),
+        readable: check_read_permission(&caller, &path, file_info.as_ref()),
+        writable: check_write_permission(&caller, &path, file_info.as_ref()),
     }
 }
 

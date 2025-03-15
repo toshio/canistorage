@@ -821,7 +821,7 @@ fn delete_directory(path:String) -> DeleteDirectoryResult {
 }
 
 #[ic_cdk::update(name="hasPermission")]
-fn hasPermission(path:String) -> HasPermissionResult {
+fn has_permission(path:String) -> HasPermissionResult {
     match validate_path(&path) {
         Err(e) => {
             return HasPermissionResult {

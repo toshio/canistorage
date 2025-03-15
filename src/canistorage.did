@@ -1,4 +1,12 @@
 type AddPermissionResult = record { code : nat32; message : opt text };
+type DeleteResult = record { code : nat32; message : opt text };
+type HasPermissionResult = record {
+  writable : bool;
+  code : nat32;
+  readable : bool;
+  message : opt text;
+  manageable : bool;
+};
 type ListFilesResult = record {
   code : nat32;
   data : opt vec text;
@@ -7,13 +15,14 @@ type ListFilesResult = record {
 type LoadResult = record { code : nat32; data : opt blob; message : opt text };
 type SaveResult = record { code : nat32; message : opt text };
 service : () -> {
-  add_permission : (principal, text, bool, bool) -> (AddPermissionResult);
+  add_permission : (principal, text, bool, bool, bool) -> (AddPermissionResult);
   createDirectory : (text) -> (AddPermissionResult);
-  delete : (text) -> (bool);
+  delete : (text) -> (DeleteResult);
+  deleteDirectory : (text) -> (DeleteResult);
+  hasPermission : (text) -> (HasPermissionResult);
   listFiles : (text) -> (ListFilesResult) query;
   load : (text) -> (LoadResult) query;
-  removeDirectory : (text) -> (bool);
-  remove_permission : (principal, text, bool, bool) -> (AddPermissionResult);
+  remove_permission : (principal, text, bool, bool, bool) -> (DeleteResult);
   save : (text, text, blob, bool) -> (SaveResult);
   version : () -> (text) query;
 }

@@ -2,28 +2,29 @@
 /// 
 /// Copyright© 2025 toshio
 ///
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fs;
 use std::fs::{File, OpenOptions};
-use std::io::{BufReader, Read, Write, ErrorKind};
+use std::io::{BufReader, BufWriter, Read, Write, ErrorKind};
 use serde::{Serialize, Deserialize};
 use candid::{CandidType, Principal};
 use sha2::{Sha256, Digest};
 
 const MIMETYPE_DIRECTORY: &str = "canistorage/directory";
 
-const ERROR_FILE_NOT_FOUND: u32 = 1; // includes directory not found
-const ERROR_FILE_ALREADY_EXISTS: u32 = 2;
-const ERROR_DIRECTORY_ALREADY_EXISTS: u32 = 3;
-const ERROR_INVALID_PATH: u32 = 4;
-const ERROR_PERMISSION_DENIED: u32 = 5;
+const ERROR_NOT_FOUND: u32 = 1; // File or directory not found
+const ERROR_ALREADY_EXISTS: u32 = 2; // Fire or directory already exists
+const ERROR_INVALID_PATH: u32 = 3;
+const ERROR_PERMISSION_DENIED: u32 = 4;
+const ERROR_INVALID_SEQUENCE: u32 = 5;
+const ERROR_INVALID_SIZE: u32 = 6;
+const ERROR_INVALID_HASH: u32 = 7;
 const ERROR_UNKNOWN: u32 = u32::MAX;
 
 /////////////////////////////////////////////////////////////////////////////
 // For Unit Test
 /////////////////////////////////////////////////////////////////////////////
-#[cfg(test)]
-use std::cell::RefCell;
-
 #[cfg(test)]
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -122,6 +123,22 @@ pub struct Info {
     sha256: Option<[u8; 32]>,
 }
 
+///
+pub struct Uploading {
+    owner: Principal,
+    size: u64,
+    updated_at: u64,
+    mime_type: String,
+    chunk: HashMap<u64, Vec<u8>>,
+}
+
+/////////////////////////////////////////////////////////////////////////////
+// Global Variables
+/////////////////////////////////////////////////////////////////////////////
+thread_local! {
+    /// keep uploading temporary data
+    static UPLOADING: RefCell<HashMap<String, Uploading>> = RefCell::default();
+}
 
 /////////////////////////////////////////////////////////////////////////////
 // Functions
@@ -347,7 +364,7 @@ fn add_permission(principal:Principal, path:String, manageable:bool, readable:bo
 
             Ok(())
         },
-        None => error!(ERROR_FILE_NOT_FOUND, "File not found")
+        None => error!(ERROR_NOT_FOUND, "File not found")
     }
 }
 
@@ -359,7 +376,7 @@ fn remove_permission(principal:Principal, path:String, manageable:bool, readable
     let caller = caller();
     let file_info = get_file_info(&path);
     if !check_manage_permission(&caller, &path, file_info.as_ref()) {
-        return error!(ERROR_PERMISSION_DENIED, "Permission denied")
+        return error!(ERROR_PERMISSION_DENIED, "Permission denied");
     }
 
     // Check whether file exists or not
@@ -393,7 +410,7 @@ fn remove_permission(principal:Principal, path:String, manageable:bool, readable
 
             Ok(())
         },
-        None => error!(ERROR_FILE_NOT_FOUND, "File not found") // TODO File or directory
+        None => error!(ERROR_NOT_FOUND, "File not found") // TODO File or directory
     }
 }
 
@@ -410,24 +427,35 @@ fn save(path:String, mime_type:String, data:Vec<u8>, overwrite:bool) -> Result<(
         return error!(ERROR_PERMISSION_DENIED, "Permission denied");
     }
 
-    // Third, check whether file exists or not
-    if file_info.is_some() && overwrite == false {
-        return error!(ERROR_FILE_ALREADY_EXISTS, "File already exists") // TODO File or directory
+    // Check Uploading
+    let uploading = UPLOADING.with(|uploading| {
+        let map = uploading.borrow();
+        map.get(&path).is_some() // TODO expired check
+    });
+    if uploading {
+      return error!(ERROR_ALREADY_EXISTS, "File already exists");
     }
 
-    // TODO save as temp, and then rename it
-    let temp_path = temp_path(&path);
+    // Third, check whether file exists or not
+    if file_info.is_some() && overwrite == false {
+        return error!(ERROR_ALREADY_EXISTS, "File already exists"); // TODO File or directory
+    } else {
+        // TODO 親ディレクトリ存在チェック (file.write_allでエラーとなるが事前に抑止)
+    }
 
+    // save as temp, and then rename it
+    let temp_path = temp_path(&path);
     let file = OpenOptions::new().write(true).create(true).truncate(true).open(&temp_path);
     match file {
         Ok(mut file) => {
             match file.write_all(&data) {
-                Ok(_) => {
+                Ok(()) => {
+                    let now = time();
                     let info = match file_info {
                         Some(mut info) => {
                             // Update
                             info.size = data.len() as u64;
-                            info.updated_at = time();
+                            info.updated_at = now;
                             info.mime_type = mime_type;
                             info.sha256 = Some(Sha256::digest(data).into());
                             info.signature = None;
@@ -435,7 +463,6 @@ fn save(path:String, mime_type:String, data:Vec<u8>, overwrite:bool) -> Result<(
                         },
                         None => {
                             // New
-                            let now = time();
                             FileInfo {
                                 size: data.len() as u64,
                                 creator: caller,
@@ -460,15 +487,10 @@ fn save(path:String, mime_type:String, data:Vec<u8>, overwrite:bool) -> Result<(
                         Err(e) => error!(ERROR_UNKNOWN, format!("{:?}", e))
                     }
                 },
-                Err(e) => match e.kind() {
-                    _ => error!(ERROR_UNKNOWN, format!("{:?}", e))
-                }
+                Err(e) => error!(ERROR_UNKNOWN, format!("{:?}", e))
             }
         },
-        Err(e) => {
-            eprintln!("Error: {:?}", e);
-            error!(ERROR_UNKNOWN, format!("{:?}", e))
-        }
+        Err(e) => error!(ERROR_UNKNOWN, format!("{:?}", e))
     }
 }
 
@@ -486,21 +508,202 @@ fn load(path:String) -> Result<Vec<u8>, Error> {
 
     // Third, check whether file exists or not
     if file_info.is_none() {
-        return error!(ERROR_FILE_NOT_FOUND, "File not found");
+        return error!(ERROR_NOT_FOUND, "File not found");
     }
 
     // FIXME check file size before read to 
     match File::open(path) {
         Ok(mut file) => {
             let mut buffer = Vec::new();
-            let size = file.read_to_end(&mut buffer);
+            let _size = file.read_to_end(&mut buffer); // TODO size handling
             Ok(buffer)
         },
         Err(e) => match e.kind() { // Not expected
-            ErrorKind::NotFound => error!(ERROR_FILE_NOT_FOUND, "File not found"),
+            ErrorKind::NotFound => error!(ERROR_NOT_FOUND, "File not found"),
             _ => error!(ERROR_UNKNOWN, format!("{:?}", e))
         }
     }
+}
+
+#[ic_cdk::update(name="beginUpload")]
+fn begin_upload(path:String, mime_type:String, overwrite:bool) -> Result<(), Error> {
+    // First, check path 
+    validate_path(&path)?;
+
+    // Second, check permission
+    let caller = caller();
+    let file_info = get_file_info(&path);
+    if !check_write_permission(&caller, &path, file_info.as_ref()) {
+        return error!(ERROR_PERMISSION_DENIED, "Permission denied");
+    }
+
+    // Third, check whether file exists or not
+    if file_info.is_some() && overwrite == false {
+        return error!(ERROR_ALREADY_EXISTS, "File already exists"); // TODO File or directory
+    }
+
+    UPLOADING.with(|uploading| {
+        let mut map = uploading.borrow_mut();
+
+        // Remove expired first
+        let now = time();
+        map.retain(|_key, value| (value.updated_at + 10 * 60 * 1000) <= now); // expired 10 minutes.
+
+        // Insert entry
+        map.insert(path, Uploading{
+            owner: caller,
+            updated_at: now,
+            size: 0,
+            mime_type,
+            chunk: HashMap::new(),
+        });
+        Ok(())
+    })
+}
+
+#[ic_cdk::update(name="sendData")]
+fn send_data(path:String, start:u64, data:Vec<u8>) -> Result<u64, Error> {
+    let caller = caller();
+
+    UPLOADING.with(|uploading| {
+        let mut map = uploading.borrow_mut();
+        match map.get_mut(&path) {
+            Some(value) => {
+                let now = time();
+                if value.owner != caller {
+                    error!(ERROR_INVALID_SEQUENCE, "Invalid sequence")
+                } else if (value.updated_at + 10 * 60 * 1000) > now {
+                    error!(ERROR_PERMISSION_DENIED, "session expired")
+                } else {
+                    value.size += data.len() as u64;
+                    value.updated_at = now;
+
+                    // map.try_insert() is still unstable...
+                    match value.chunk.insert(start, data) {
+                        Some(old) => {
+                            // TODO better to be error but currently accepted and overwritten
+                            value.size -= old.len() as u64;
+                            Ok(value.size)
+                        },
+                        None => Ok(value.size)
+                    }
+                }
+            },
+            None => error!(ERROR_INVALID_SEQUENCE, "Invalid sequence")
+        }
+    })
+}
+
+#[ic_cdk::update(name="commitUpload")]
+fn commit_upload(path:String, size:u64, sha256:Option<[u8; 32]>) -> Result<(), Error> {
+    let caller = caller();
+
+    UPLOADING.with(|uploading| {
+        let mut map = uploading.borrow_mut();
+        match map.get_mut(&path) {
+            Some(value) => {
+                let now = time();
+                if value.owner != caller {
+                    error!(ERROR_INVALID_SEQUENCE, "Invalid sequence")
+                } else if (value.updated_at + 10 * 60 * 1000) > now {
+                    error!(ERROR_PERMISSION_DENIED, "session expired")
+                } else if value.size != size {
+                    error!(ERROR_INVALID_SEQUENCE, "Invalid sequence")
+                } else {
+                    // write file
+
+                    let temp_path = temp_path(&path);
+                    match fs::File::create(&path) {
+                        Ok(file) => {
+                            let mut buffer = BufWriter::with_capacity(2*1024*1024, file); // 2MiB Buffer
+                            let mut hasher = Sha256::new();
+                            let mut index:u64 = 0;
+                            loop {
+                                match value.chunk.get(&index) {
+                                    Some(data) => {
+                                        index += data.len() as u64;
+                                        hasher.update(data);
+                                        let _result = buffer.write(data); // TODO handling result
+                                    },
+                                    None => {
+                                        if index != size {
+                                            return error!(ERROR_INVALID_SIZE, "Invalid size");
+                                        }
+                                        if sha256.is_some() && hasher.finalize().as_slice() != sha256.unwrap() {
+                                            return error!(ERROR_INVALID_HASH, "Invalid hash");
+                                        }
+                                        let _result = buffer.flush(); // TODO handling result
+
+                                        let file_info = get_file_info(&path);
+                                        let info = match file_info {
+                                            Some(mut info) => {
+                                                // Update
+                                                info.size = size;
+                                                info.updated_at = now;
+                                                info.mime_type = value.mime_type.clone();
+                                                info.sha256 = sha256;
+                                                info.signature = None;
+                                                info
+                                            },
+                                            None => {
+                                                // New
+                                                FileInfo {
+                                                    size,
+                                                    creator: caller,
+                                                    created_at: now,
+                                                    updater: caller,
+                                                    updated_at: now,
+                                                    mime_type: value.mime_type.clone(),
+                                                    manageable: Vec::new(),
+                                                    readable: Vec::new(),
+                                                    writable: Vec::new(),
+                                                    sha256,
+                                                    signature: None,
+                                                }
+                                            }
+                                        };
+
+                                        match fs::rename(&temp_path, &path) {
+                                            Ok(_) => {
+                                                set_file_info(&path, &info);
+                                                map.remove(&path);
+                                                return Ok(());
+                                            },
+                                            Err(e) => {
+                                                return error!(ERROR_UNKNOWN, format!("{:?}", e));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        Err(e) => error!(ERROR_UNKNOWN, e) 
+                    }
+                }
+             },
+            None => error!(ERROR_INVALID_SEQUENCE, "Invalid sequence")
+        }
+    })
+}
+
+#[ic_cdk::update(name="cancelUpload")]
+fn cancel_upload(path:String) -> Result<(), Error> {
+    let caller = caller();
+
+    UPLOADING.with(|uploading| {
+        let mut map = uploading.borrow_mut();
+        match map.get(&path) {
+            Some(value) => {
+                if value.owner != caller {
+                    error!(ERROR_INVALID_SEQUENCE, "Invalid sequence")
+                } else {
+                    map.remove(&path);
+                    Ok(())
+                }
+            }
+            None => error!(ERROR_INVALID_SEQUENCE, "Invalid sequence")
+        }
+    })
 }
 
 // FIXME result should be more detailed
@@ -512,7 +715,7 @@ fn delete(path:String) -> Result<(), Error> {
     let caller = caller();
     let file_info = get_file_info(&path);
     if !check_write_permission(&caller, &path, file_info.as_ref()) {
-        return error!(ERROR_PERMISSION_DENIED, "Permission denied")
+        return error!(ERROR_PERMISSION_DENIED, "Permission denied");
     }
 
     match fs::remove_file(&path) {
@@ -522,7 +725,7 @@ fn delete(path:String) -> Result<(), Error> {
             Ok(())
         },
         Err(e) => match e.kind() {   
-            ErrorKind::NotFound => error!(ERROR_FILE_NOT_FOUND, "File not found"),
+            ErrorKind::NotFound => error!(ERROR_NOT_FOUND, "File not found"),
             _=> error!(ERROR_UNKNOWN, format!("{:?}", e))
         }
     }
@@ -540,7 +743,7 @@ fn list_files(path:String) -> Result<Vec<String>, Error> {
     }
 
     if file_info.is_none() {
-        return error!(ERROR_FILE_NOT_FOUND, "Directory not found");
+        return error!(ERROR_NOT_FOUND, "Directory not found");
     }
 
     let entries = fs::read_dir(path).unwrap();
@@ -569,11 +772,11 @@ fn create_directory(path:String) -> Result<(), Error> {
     let caller = caller();
     let file_info = get_file_info(&path);
     if !check_write_permission(&caller, &path, file_info.as_ref()) {
-        return error!(ERROR_PERMISSION_DENIED, "Permission denied")
+        return error!(ERROR_PERMISSION_DENIED, "Permission denied");
     }
 
     if file_info.is_some() {
-        return error!(ERROR_FILE_ALREADY_EXISTS, "Directory already exists"); // FIXME Dir or file exists
+        return error!(ERROR_ALREADY_EXISTS, "Directory already exists"); // FIXME Dir or file exists
     }
 
     match fs::create_dir(&path) {
@@ -611,7 +814,7 @@ fn delete_directory(path:String) -> Result<(), Error> {
     }
 
     if file_info.is_none() {
-        return error!(ERROR_FILE_NOT_FOUND, "Directory not found");
+        return error!(ERROR_NOT_FOUND, "Directory not found");
     }
 
     match fs::remove_dir(&path) {
@@ -643,7 +846,7 @@ fn get_info(path:String) -> Result<Info, Error> {
             mime_type: info.mime_type,
             sha256: info.sha256
         }),
-        None => error!(ERROR_FILE_NOT_FOUND, "File not found")
+        None => error!(ERROR_NOT_FOUND, "File not found")
     }
 }
 
@@ -653,7 +856,7 @@ fn has_permission(path:String) -> Result<Permission, Error> {
 
     let file_info = get_file_info(&path);
     if file_info.is_none() {
-        return error!(ERROR_FILE_NOT_FOUND, "File not found");
+        return error!(ERROR_NOT_FOUND, "File not found");
     }
 
     let caller = caller();
@@ -747,7 +950,7 @@ mod tests {
         let result = save("./.test/file.txt".to_string(), "text/plain".to_string(), data.clone(), false);
         // FIXME should be error.
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().code, ERROR_FILE_ALREADY_EXISTS);
+        assert_eq!(result.unwrap_err().code, ERROR_ALREADY_EXISTS);
     }
 
     #[test]
@@ -769,7 +972,7 @@ mod tests {
 
         // delete (File not found)
         let result = delete("./.test/file.txt".to_string());
-        assert_eq!(result.unwrap_err().code, ERROR_FILE_NOT_FOUND);
+        assert_eq!(result.unwrap_err().code, ERROR_NOT_FOUND);
     }
 
     #[test]

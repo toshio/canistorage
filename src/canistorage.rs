@@ -611,9 +611,8 @@ fn commit_upload(path:String, size:u64, sha256:Option<[u8; 32]>) -> Result<(), E
                     error!(ERROR_INVALID_SEQUENCE, "Invalid sequence")
                 } else {
                     // write file
-
                     let temp_path = temp_path(&path);
-                    let result = match fs::File::create(&path) {
+                    let result = match fs::File::create(&temp_path) {
                         Ok(file) => {
                             let mut buffer = BufWriter::with_capacity(2*1024*1024, file); // 2MiB Buffer
                             let mut hasher = Sha256::new();
@@ -635,55 +634,58 @@ fn commit_upload(path:String, size:u64, sha256:Option<[u8; 32]>) -> Result<(), E
                                             return error!(ERROR_INVALID_HASH, "Invalid hash");
                                         }
                                         let _result = buffer.flush(); // TODO handling result
-
-                                        let file_info = get_file_info(&path);
-                                        let info = match file_info {
-                                            Some(mut info) => {
-                                                // Update
-                                                info.size = size;
-                                                info.updated_at = now;
-                                                info.mime_type = value.mime_type.clone();
-                                                info.sha256 = sha256;
-                                                info.signature = None;
-                                                info
-                                            },
-                                            None => {
-                                                // New
-                                                FileInfo {
-                                                    size,
-                                                    creator: caller,
-                                                    created_at: now,
-                                                    updater: caller,
-                                                    updated_at: now,
-                                                    mime_type: value.mime_type.clone(),
-                                                    manageable: Vec::new(),
-                                                    readable: Vec::new(),
-                                                    writable: Vec::new(),
-                                                    sha256,
-                                                    signature: None,
-                                                }
-                                            }
-                                        };
-
-                                        // Force drop
-                                        let file = false;
-
-                                        match fs::rename(&temp_path, &path) {
-                                            Ok(_) => {
-                                                set_file_info(&path, &info);
-                                                map.remove(&path);
-                                                return Ok(());
-                                            },
-                                            Err(e) => {
-                                                println!("fs::rename failed");
-                                                return error!(ERROR_UNKNOWN, format!("{:?}", e));
-                                            }
-                                        }
+                                        break;
                                     }
                                 }
                             }
+                            Ok(())
                         },
                         Err(e) => error!(ERROR_UNKNOWN, e) 
+                    };
+                    match result {
+                        Ok(()) => {
+                            let file_info = get_file_info(&path);
+                            let info = match file_info {
+                                Some(mut info) => {
+                                    // Update
+                                    info.size = size;
+                                    info.updated_at = now;
+                                    info.mime_type = value.mime_type.clone();
+                                    info.sha256 = sha256;
+                                    info.signature = None;
+                                    info
+                                },
+                                None => {
+                                    // New
+                                    FileInfo {
+                                        size,
+                                        creator: caller,
+                                        created_at: now,
+                                        updater: caller,
+                                        updated_at: now,
+                                        mime_type: value.mime_type.clone(),
+                                        manageable: Vec::new(),
+                                        readable: Vec::new(),
+                                        writable: Vec::new(),
+                                        sha256,
+                                        signature: None,
+                                    }
+                                }
+                            };
+
+                            match fs::rename(&temp_path, &path) {
+                                Ok(_) => {
+                                    set_file_info(&path, &info);
+                                    map.remove(&path);
+                                    Ok(())
+                                },
+                                Err(e) => {
+                                    println!("fs::rename failed");
+                                    error!(ERROR_UNKNOWN, format!("{:?}", e))
+                                }
+                            }
+                        },
+                        Err(e) => Err(e)
                     }
                 }
              },
@@ -1085,8 +1087,7 @@ mod tests {
         let expected = "AAABBBBCCCCC".as_bytes();
         assert_eq!(index, expected.len() as u64);
         let result = commit_upload(path.clone(), index, Some(Sha256::digest(expected).into()));
-        assert_eq!(result.unwrap_err().message, "");
-//        assert!(result.is_ok());
+        assert!(result.is_ok());
 
         let result = load(path.clone());
         assert!(result.is_ok());

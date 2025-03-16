@@ -75,7 +75,7 @@ fn caller() -> Principal {
 /////////////////////////////////////////////////////////////////////////////
 // Data Structures
 /////////////////////////////////////////////////////////////////////////////
-#[derive(CandidType, Serialize, Deserialize)]
+#[derive(CandidType, Serialize, Deserialize, Debug)]
 pub struct Error {
     code:u32,
     message: String,
@@ -547,7 +547,7 @@ fn begin_upload(path:String, mime_type:String, overwrite:bool) -> Result<(), Err
 
         // Remove expired first
         let now = time();
-        map.retain(|_key, value| (value.updated_at + 10 * 60 * 1000) <= now); // expired 10 minutes.
+        map.retain(|_key, value| (value.updated_at + 10 * 60 * 1000) >= now); // expired 10 minutes.
 
         // Insert entry
         map.insert(path, Uploading{
@@ -572,7 +572,7 @@ fn send_data(path:String, start:u64, data:Vec<u8>) -> Result<u64, Error> {
                 let now = time();
                 if value.owner != caller {
                     error!(ERROR_INVALID_SEQUENCE, "Invalid sequence")
-                } else if (value.updated_at + 10 * 60 * 1000) > now {
+                } else if (value.updated_at + 10 * 60 * 1000) < now {
                     error!(ERROR_PERMISSION_DENIED, "session expired")
                 } else {
                     value.size += data.len() as u64;
@@ -605,15 +605,15 @@ fn commit_upload(path:String, size:u64, sha256:Option<[u8; 32]>) -> Result<(), E
                 let now = time();
                 if value.owner != caller {
                     error!(ERROR_INVALID_SEQUENCE, "Invalid sequence")
-                } else if (value.updated_at + 10 * 60 * 1000) > now {
-                    error!(ERROR_PERMISSION_DENIED, "session expired")
+                } else if (value.updated_at + 10 * 60 * 1000) < now {
+                    error!(ERROR_PERMISSION_DENIED, "transaction expired")
                 } else if value.size != size {
                     error!(ERROR_INVALID_SEQUENCE, "Invalid sequence")
                 } else {
                     // write file
 
                     let temp_path = temp_path(&path);
-                    match fs::File::create(&path) {
+                    let result = match fs::File::create(&path) {
                         Ok(file) => {
                             let mut buffer = BufWriter::with_capacity(2*1024*1024, file); // 2MiB Buffer
                             let mut hasher = Sha256::new();
@@ -621,6 +621,8 @@ fn commit_upload(path:String, size:u64, sha256:Option<[u8; 32]>) -> Result<(), E
                             loop {
                                 match value.chunk.get(&index) {
                                     Some(data) => {
+                                        println!("index:{}, data.size:{}", index, data.len());
+
                                         index += data.len() as u64;
                                         hasher.update(data);
                                         let _result = buffer.write(data); // TODO handling result
@@ -663,6 +665,9 @@ fn commit_upload(path:String, size:u64, sha256:Option<[u8; 32]>) -> Result<(), E
                                             }
                                         };
 
+                                        // Force drop
+                                        let file = false;
+
                                         match fs::rename(&temp_path, &path) {
                                             Ok(_) => {
                                                 set_file_info(&path, &info);
@@ -670,6 +675,7 @@ fn commit_upload(path:String, size:u64, sha256:Option<[u8; 32]>) -> Result<(), E
                                                 return Ok(());
                                             },
                                             Err(e) => {
+                                                println!("fs::rename failed");
                                                 return error!(ERROR_UNKNOWN, format!("{:?}", e));
                                             }
                                         }
@@ -934,8 +940,7 @@ mod tests {
         assert!(result.is_ok());
         let result = load("./.test/file.txt".to_string());
         assert!(result.is_ok());
-// FIXME compile error
-//        assert_eq!(result.unwrap(), data);
+        assert_eq!(result.unwrap(), data);
 
         // overwrite
         let data = "Hello, World!".as_bytes().to_vec();
@@ -943,12 +948,10 @@ mod tests {
         assert!(result.is_ok());
         let result = load("./.test/file.txt".to_string());
         assert!(result.is_ok());
-// FIXME compile error
-//        assert_eq!(result.unwrap(), data);
+        assert_eq!(result.unwrap(), data);
 
         // error
         let result = save("./.test/file.txt".to_string(), "text/plain".to_string(), data.clone(), false);
-        // FIXME should be error.
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().code, ERROR_ALREADY_EXISTS);
     }
@@ -1051,5 +1054,42 @@ mod tests {
     #[test]
     fn test_remove_permission() {
         let _context = setup();
+    }
+
+    #[test]
+    fn test_upload() {
+        let _context = setup();
+        let path = "./.test/file.txt".to_string();
+        let result = begin_upload(path.clone(), "text/plain".to_string(), false);
+        assert!(result.is_ok());
+
+        let mut index = 0 as u64;
+        let data = "AAA".as_bytes().to_vec();
+        let result = send_data(path.clone(), index, data.clone());
+        index += data.len() as u64;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), index);
+
+        let data = "BBBB".as_bytes().to_vec();
+        let result = send_data(path.clone(), index, data.clone());
+        index += data.len() as u64;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), index);
+
+        let data = "CCCCC".as_bytes().to_vec();
+        let result = send_data(path.clone(), index, data.clone());
+        index += data.len() as u64;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), index);
+
+        let expected = "AAABBBBCCCCC".as_bytes();
+        assert_eq!(index, expected.len() as u64);
+        let result = commit_upload(path.clone(), index, Some(Sha256::digest(expected).into()));
+        assert_eq!(result.unwrap_err().message, "");
+//        assert!(result.is_ok());
+
+        let result = load(path.clone());
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), expected);
     }
 }

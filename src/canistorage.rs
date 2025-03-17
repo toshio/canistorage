@@ -906,6 +906,10 @@ mod tests {
     struct TestContext {
     }
     fn setup() -> TestContext {
+        // owner
+        let owner = Principal::from_text("zebsi-6birt-enaic-v4hbv-zffiv-ft53g-u4gi3-og45y-tskzf-m6jus-xqe").unwrap(); // goddess x 12
+        set_caller(owner);
+
         let _ = fs::remove_dir_all(format!("{}/", ROOT)); // Root is "./.test/" for unit test
         let _ = fs::remove_file(file_info_path(&ROOT.to_string()));
         let _ = fs::create_dir(format!("{}/", ROOT));
@@ -1051,6 +1055,95 @@ mod tests {
     #[test]
     fn test_add_permission() {
         let _context = setup();
+        let owner = caller();
+
+        // user
+        let user = Principal::from_text("aaikz-lv7jd-phj2u-t6r4n-6gne4-3rv3x-jus4j-zbiaz-llnsl-jvk5j-iqe").unwrap(); // actor x 12
+
+        // manageable
+        set_caller(owner);
+        let result = add_permission(user, ROOT.to_string(), true, false, false);
+        assert!(result.is_ok());
+        set_caller(user);
+        let permission = has_permission(ROOT.to_string()).unwrap();
+        assert_eq!(permission.manageable, true);
+        assert_eq!(permission.readable, false);
+        assert_eq!(permission.writable, false);
+        set_caller(owner);
+        let result = remove_permission(user, ROOT.to_string(), true, false, false);
+        assert!(result.is_ok());
+        set_caller(user);
+        let permission = has_permission(ROOT.to_string()).unwrap();
+        assert_eq!(permission.manageable, false);
+        assert_eq!(permission.readable, false);
+        assert_eq!(permission.writable, false);
+
+        // readable
+        set_caller(owner);
+        let result = add_permission(user, ROOT.to_string(), false, true, false);
+        assert!(result.is_ok());
+        set_caller(user);
+        let permission = has_permission(ROOT.to_string()).unwrap();
+        assert_eq!(permission.manageable, false);
+        assert_eq!(permission.readable, true);
+        assert_eq!(permission.writable, false);
+
+        set_caller(owner);
+        let result = remove_permission(user, ROOT.to_string(), true, true, false);
+        assert!(result.is_ok());
+        set_caller(user);
+        let permission = has_permission(ROOT.to_string()).unwrap();
+        assert_eq!(permission.manageable, false);
+        assert_eq!(permission.readable, false);
+        assert_eq!(permission.writable, false);
+
+        // writable
+        set_caller(owner);
+        let result = add_permission(user, ROOT.to_string(), false, false, true);
+        assert!(result.is_ok());
+        set_caller(user);
+        let permission = has_permission(ROOT.to_string()).unwrap();
+        assert_eq!(permission.manageable, false);
+        assert_eq!(permission.readable, false);
+        assert_eq!(permission.writable, true);
+
+        set_caller(owner);
+        let result = remove_permission(user, ROOT.to_string(), true, false, true);
+        set_caller(user);
+        let permission = has_permission(ROOT.to_string()).unwrap();
+        assert_eq!(permission.manageable, false);
+        assert_eq!(permission.readable, false);
+        assert_eq!(permission.writable, false);
+
+        // all
+        set_caller(owner);
+        let result = add_permission(user, ROOT.to_string(), true, true, true);
+        assert!(result.is_ok());
+        set_caller(user);
+        let permission = has_permission(ROOT.to_string()).unwrap();
+        assert_eq!(permission.manageable, true);
+        assert_eq!(permission.readable, true);
+        assert_eq!(permission.writable, true);
+
+        // no remove
+        set_caller(owner);
+        let result = remove_permission(user, ROOT.to_string(), false, false, false);
+        assert!(result.is_ok());
+        set_caller(user);
+        let permission = has_permission(ROOT.to_string()).unwrap();
+        assert_eq!(permission.manageable, true);
+        assert_eq!(permission.readable, true);
+        assert_eq!(permission.writable, true);
+
+        // remove
+        set_caller(owner);
+        let result = remove_permission(user, ROOT.to_string(), true, true, true);
+        assert!(result.is_ok());
+        set_caller(user);
+        let permission = has_permission(ROOT.to_string()).unwrap();
+        assert_eq!(permission.manageable, false);
+        assert_eq!(permission.readable, false);
+        assert_eq!(permission.writable, false);
     }
 
     #[test]

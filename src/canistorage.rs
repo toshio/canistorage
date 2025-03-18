@@ -201,9 +201,18 @@ fn get_file_info(path:&String) -> Option<FileInfo> {
     }
 }
 
-fn set_file_info(path:&String, info:&FileInfo) -> () {
-    // TODO Error handling
-    let _ = fs::write(file_info_path(path), serde_cbor::to_vec(info).unwrap());
+fn set_file_info(path:&String, info:&FileInfo) -> Result<(), Error> {
+    let info_path = file_info_path(path);
+    let file = OpenOptions::new().write(true).create(true).truncate(true).open(&info_path);
+    match file {
+        Ok(mut file) => {
+            match file.write_all(&serde_cbor::to_vec(info).unwrap()) {
+                Ok(()) => Ok(()),
+                Err(e) => error!(ERROR_UNKNOWN, format!("{:?}", e))
+            }
+        },
+        Err(e) => error!(ERROR_UNKNOWN, format!("{:?}", e))
+    }
 }
 
 fn delete_file_info(path:&String) -> () {
@@ -360,7 +369,7 @@ fn add_permission(principal:Principal, path:String, manageable:bool, readable:bo
                     new_info.writable.sort();
                 }
             }
-            set_file_info(&path, &new_info);
+            set_file_info(&path, &new_info)?;
 
             Ok(())
         },
@@ -406,7 +415,7 @@ fn remove_permission(principal:Principal, path:String, manageable:bool, readable
                     Err(_) =>{}
                 }
             }
-            set_file_info(&path, &new_info);
+            set_file_info(&path, &new_info)?;
 
             Ok(())
         },
@@ -481,7 +490,7 @@ fn save(path:String, mime_type:String, data:Vec<u8>, overwrite:bool) -> Result<(
 
                     match fs::rename(&temp_path, &path) {
                         Ok(_) => {
-                            set_file_info(&path, &info);
+                            set_file_info(&path, &info)?;
                             Ok(())
                         },
                         Err(e) => error!(ERROR_UNKNOWN, format!("{:?}", e))
@@ -675,7 +684,7 @@ fn commit_upload(path:String, size:u64, sha256:Option<[u8; 32]>) -> Result<(), E
 
                             match fs::rename(&temp_path, &path) {
                                 Ok(_) => {
-                                    set_file_info(&path, &info);
+                                    set_file_info(&path, &info)?;
                                     map.remove(&path);
                                     Ok(())
                                 },
@@ -802,7 +811,7 @@ fn create_directory(path:String) -> Result<(), Error> {
                 writable: Vec::new(),
                 sha256: None,
                 signature: None,
-            });
+            })?;
 
             Ok(())
         },
@@ -877,7 +886,7 @@ fn has_permission(path:String) -> Result<Permission, Error> {
     })
 }
 
-pub fn init() {
+pub fn init() ->() {
     let owner = caller();
     let now = time();
     ic_cdk::print(format!("Root Permission to {}", owner));
@@ -893,7 +902,7 @@ pub fn init() {
         writable: vec![owner],
         sha256: None,
         signature: None,
-    });    
+    }).unwrap();
 }
 
 /////////////////////////////////////////////////////////////////////////////
@@ -925,7 +934,7 @@ mod tests {
             writable: vec![caller()],
             sha256: None,
             signature: None,
-        });
+        }).unwrap();
         TestContext {
         }
     }
@@ -1006,7 +1015,7 @@ mod tests {
 
         // Check of root
         let path = ROOT.to_string();
-        set_file_info(&path, &file_info);
+        set_file_info(&path, &file_info).unwrap();
         assert_eq!(check_read_permission(&principal_readable, &path, Some(&file_info)), true);
         assert_eq!(check_read_permission(&principal_writable, &path, Some(&file_info)), false);
         assert_eq!(check_write_permission(&principal_readable, &path, Some(&file_info)), false);
@@ -1034,7 +1043,7 @@ mod tests {
             sha256: None,
             signature: None,
         };
-        set_file_info(&path, &file_info);
+        set_file_info(&path, &file_info).unwrap();
         assert_eq!(check_read_permission(&principal_child_only, &path, Some(&file_info)), true);
         assert_eq!(check_write_permission(&principal_child_only, &path, Some(&file_info)), true);
         // hasPermission because of parent (Inherited)
@@ -1048,7 +1057,6 @@ mod tests {
     #[test]
     fn test_list_files() {
         let _context = setup();
-        let owner = caller();
 
         // new file
         let data = "Hello, World!".as_bytes().to_vec();
@@ -1056,13 +1064,13 @@ mod tests {
         assert!(result.is_ok());
 
         // new folder
-        let data = "Hello, World!".as_bytes().to_vec();
         let result = create_directory("./.test/dir".to_string());
         assert!(result.is_ok());
 
         let result = list_files("./.test".to_string());
         assert!(result.is_ok());
         let list = result.unwrap();
+        assert_eq!(list.len(), 2);
     }
 
     #[test]
@@ -1122,6 +1130,7 @@ mod tests {
 
         set_caller(owner);
         let result = remove_permission(user, ROOT.to_string(), true, false, true);
+        assert!(result.is_ok());
         set_caller(user);
         let permission = has_permission(ROOT.to_string()).unwrap();
         assert_eq!(permission.manageable, false);

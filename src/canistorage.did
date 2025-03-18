@@ -18,8 +18,12 @@ type Result_1 = variant { Ok : Info; Err : Error };
 type Result_2 = variant { Ok : Permission; Err : Error };
 type Result_3 = variant { Ok : vec text; Err : Error };
 type Result_4 = variant { Ok : blob; Err : Error };
+type Result_5 = variant { Ok : nat64; Err : Error };
 service : () -> {
   add_permission : (principal, text, bool, bool, bool) -> (Result);
+  beginUpload : (text, text, bool) -> (Result);
+  cancelUpload : (text) -> (Result);
+  commitUpload : (text, nat64, opt blob) -> (Result);
   createDirectory : (text) -> (Result);
   delete : (text) -> (Result);
   deleteDirectory : (text) -> (Result);
@@ -29,5 +33,6 @@ service : () -> {
   load : (text) -> (Result_4) query;
   remove_permission : (principal, text, bool, bool, bool) -> (Result);
   save : (text, text, blob, bool) -> (Result);
+  sendData : (text, nat64, blob) -> (Result_5);
   version : () -> (text) query;
 }

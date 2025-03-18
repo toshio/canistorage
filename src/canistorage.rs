@@ -972,8 +972,7 @@ mod tests {
         assert!(result.is_ok());
         let result = load("./.test/file.txt".to_string());
         assert!(result.is_ok());
-// FIXME compile error
-//        assert_eq!(result.unwrap(), data);
+        assert_eq!(result.unwrap(), data);
 
         // delete
         let result = delete("./.test/file.txt".to_string());
@@ -1049,7 +1048,21 @@ mod tests {
     #[test]
     fn test_list_files() {
         let _context = setup();
+        let owner = caller();
 
+        // new file
+        let data = "Hello, World!".as_bytes().to_vec();
+        let result = save("./.test/file".to_string(), "text/plain".to_string(), data.clone(), false);
+        assert!(result.is_ok());
+
+        // new folder
+        let data = "Hello, World!".as_bytes().to_vec();
+        let result = create_directory("./.test/dir".to_string());
+        assert!(result.is_ok());
+
+        let result = list_files("./.test".to_string());
+        assert!(result.is_ok());
+        let list = result.unwrap();
     }
 
     #[test]
@@ -1148,7 +1161,12 @@ mod tests {
 
     #[test]
     fn test_remove_permission() {
-        let _context = setup();
+        // test on test_add_permission()
+    }
+
+    #[test]
+    fn test_has_permission() {
+        // test on test_add_permission()
     }
 
     #[test]

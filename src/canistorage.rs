@@ -338,7 +338,7 @@ fn check_manage_permission(principal:&Principal, path:&String, file_info:Option<
     }
 }
 
-#[ic_cdk::update]
+#[ic_cdk::update(name="addPermission")]
 fn add_permission(principal:Principal, path:String, manageable:bool, readable:bool, writable:bool) -> Result<(), Error> {
     validate_path(&path)?;
 
@@ -378,7 +378,7 @@ fn add_permission(principal:Principal, path:String, manageable:bool, readable:bo
 }
 
 
-#[ic_cdk::update]
+#[ic_cdk::update(name="removePermission")]
 fn remove_permission(principal:Principal, path:String, manageable:bool, readable:bool, writable:bool) -> Result<(), Error> {
     validate_path(&path)?;
 

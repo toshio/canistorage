@@ -104,7 +104,6 @@ pub struct FileInfo {
     signature: Option<Vec<u8>>,
 }
 
-
 #[derive(CandidType, Serialize, Deserialize)]
 pub struct Permission {
     manageable: bool,
@@ -123,7 +122,6 @@ pub struct Info {
     sha256: Option<[u8; 32]>,
 }
 
-///
 pub struct Uploading {
     owner: Principal,
     size: u64,
@@ -131,6 +129,7 @@ pub struct Uploading {
     mime_type: String,
     chunk: HashMap<u64, Vec<u8>>,
 }
+
 
 /////////////////////////////////////////////////////////////////////////////
 // Global Variables
@@ -140,204 +139,18 @@ thread_local! {
     static UPLOADING: RefCell<HashMap<String, Uploading>> = RefCell::default();
 }
 
+
 /////////////////////////////////////////////////////////////////////////////
-// Functions
+// Methods
 /////////////////////////////////////////////////////////////////////////////
 
-/// validates the specified path
-///
-/// # Arguments
-///
-/// * `path` - path to check
-/// 
-fn validate_path(path:&String) -> Result<(), Error> {
-    // length
-    if path.len() == 0 {
-        return error!(ERROR_INVALID_PATH, "Path is empty");
-    }
-
-    // starts with
-    if path.starts_with(ROOT) == false {
-        return error!(ERROR_INVALID_PATH, "Not full path");
-    }
-    #[cfg(not(test))]
-    if path.starts_with("/") == false {
-        return error!(ERROR_INVALID_PATH, "Not full path");
-    }
-
-    // invalid characters
-    if ["..", "`"].iter().any(|s| path.contains(s)) {
-        return error!(ERROR_INVALID_PATH, "Path contains invalid characters");
-    }
-    Ok(())
-}
-
-/// returns file info path (metadata of file)
-fn file_info_path(path:&String) -> String {
-    if path == "/" {
-        return "/`".to_string();
-    }
-    match path.rfind("/") {
-        Some(index) => {
-            format!("{}`{}", &path[0..index +1], &path[index + 1..])
-        },
-        None => {
-            // FIXME Not expected
-            format!("`{}", path)
-        }
-    }
-}
-
-fn get_file_info(path:&String) -> Option<FileInfo> {
-    match File::open(file_info_path(path)) {
-        Ok(file) => {
-            let reader = BufReader::new(file);
-            let result = serde_cbor::from_reader(reader).unwrap();
-            Some(result)
-       },
-        Err(_) => {
-            None
-        }
-    }
-}
-
-fn set_file_info(path:&String, info:&FileInfo) -> Result<(), Error> {
-    let info_path = file_info_path(path);
-    let file = OpenOptions::new().write(true).create(true).truncate(true).open(&info_path);
-    match file {
-        Ok(mut file) => {
-            match file.write_all(&serde_cbor::to_vec(info).unwrap()) {
-                Ok(()) => Ok(()),
-                Err(e) => error!(ERROR_UNKNOWN, format!("{:?}", e))
-            }
-        },
-        Err(e) => error!(ERROR_UNKNOWN, format!("{:?}", e))
-    }
-}
-
-fn delete_file_info(path:&String) -> () {
-    // TODO Error handling
-    let _ = fs::remove_file(file_info_path(path));
-}
-
-// returns temporary path for saving a file
-fn temp_path(path:&String) -> String {
-    if path == "/" {
-        return "/``".to_string();
-    }
-    match path.rfind("/") {
-        Some(index) => {
-            format!("{}``{}", &path[0..index +1], &path[index + 1..])
-        },
-        None => {
-            // FIXME Not expected
-            format!("``{}", path)
-        }
-    }
-}
-
-/// Returns whether the specified path is readable or not
+/// grants permissions of manage, read, write to tht principal
 ///
 /// # Arguments
 ///
 /// * `principal` - Principal to check
 /// * `path` - must start with ROOT
 /// * `file_info` - FileInfo
-fn check_read_permission(principal:&Principal, path:&String, file_info:Option<&FileInfo>) -> bool {
-    // First, check readable of file_info
-    if let Some(info) = file_info {
-        if info.readable.iter().any(|p| p == principal) {
-            // Found readable
-            return true;
-        }
-    }
-    if path == ROOT {
-        // Second, check if ROOT
-        false
-    } else {
-        // Then, check parent file_info recursively
-        let parent_path = match path.rfind("/") {
-            Some(index) => {
-                path[0..index].to_string()
-            },
-            None => {
-                // Special case: "" -> "/""
-                "/".to_string()
-            }
-        };
-        let parent_info = get_file_info(&parent_path);
-        check_read_permission(principal, &parent_path, parent_info.as_ref())
-    }
-}
-
-/// Returns whether the specified path is writable or not
-///
-/// # Arguments
-///
-/// * `principal` - Principal to check
-/// * `path` - must start with ROOT
-/// * `file_info` - FileInfo
-fn check_write_permission(principal:&Principal, path:&String, file_info:Option<&FileInfo>) -> bool {
-    // First, check writeable of file_info
-    if let Some(info) = file_info {
-        if info.writable.iter().any(|p| p == principal) {
-            // Found writeable
-            return true;
-        }
-    }
-    if path == ROOT {
-        // Second, check if ROOT
-        false
-    } else {
-        // Then, check parent file_info recursively
-        let parent_path = match path.rfind("/") {
-            Some(index) => {
-                path[0..index].to_string()
-            },
-            None => {
-                // Special case: "" -> "/""
-                "/".to_string()
-            }
-        };
-        let parent_info = get_file_info(&parent_path);
-        check_write_permission(principal, &parent_path, parent_info.as_ref())
-    }
-}
-
-/// Returns whether the specified path is manageable or not
-///
-/// # Arguments
-///
-/// * `principal` - Principal to check
-/// * `path` - must start with ROOT
-/// * `file_info` - FileInfo
-fn check_manage_permission(principal:&Principal, path:&String, file_info:Option<&FileInfo>) -> bool {
-    // First, check manageable of file_info
-    if let Some(info) = file_info {
-        if info.manageable.iter().any(|p| p == principal) {
-            // Found manageable
-            return true;
-        }
-    }
-    if path == ROOT {
-        // Second, check if ROOT
-        false
-    } else {
-        // Then, check parent file_info recursively
-        let parent_path = match path.rfind("/") {
-            Some(index) => {
-                path[0..index].to_string()
-            },
-            None => {
-                // Special case: "" -> "/""
-                "/".to_string()
-            }
-        };
-        let parent_info = get_file_info(&parent_path);
-        check_manage_permission(principal, &parent_path, parent_info.as_ref())
-    }
-}
-
 #[ic_cdk::update(name="addPermission")]
 fn add_permission(principal:Principal, path:String, manageable:bool, readable:bool, writable:bool) -> Result<(), Error> {
     validate_path(&path)?;
@@ -377,7 +190,13 @@ fn add_permission(principal:Principal, path:String, manageable:bool, readable:bo
     }
 }
 
-
+/// revokes permissions of manage, read, write from tht principal
+///
+/// # Arguments
+///
+/// * `principal` - Principal to check
+/// * `path` - must start with ROOT
+/// * `file_info` - FileInfo
 #[ic_cdk::update(name="removePermission")]
 fn remove_permission(principal:Principal, path:String, manageable:bool, readable:bool, writable:bool) -> Result<(), Error> {
     validate_path(&path)?;
@@ -423,7 +242,38 @@ fn remove_permission(principal:Principal, path:String, manageable:bool, readable
     }
 }
 
-/// Uload a file to the canister (less than 2MiB)
+/// Returns permissions of the specified path
+/// # Arguments
+///
+/// * `path` - must start with ROOT
+///
+#[ic_cdk::query(name="hasPermission")]
+fn has_permission(path:String) -> Result<Permission, Error> {
+    validate_path(&path)?;
+
+    let file_info = get_file_info(&path);
+    if file_info.is_none() {
+        return error!(ERROR_NOT_FOUND, "File not found");
+    }
+
+    let caller = caller();
+
+    // TODO optimize algorithm
+    Ok(Permission {
+        manageable: check_manage_permission(&caller, &path, file_info.as_ref()),
+        readable: check_read_permission(&caller, &path, file_info.as_ref()),
+        writable: check_write_permission(&caller, &path, file_info.as_ref()),
+    })
+}
+
+/// Uloads a file to the canister (less than 2MiB)
+///
+/// # Arguments
+///
+/// * `path` - must start with ROOT and the parent directory must exist
+/// * `mimetype` - mimetype of the file
+/// * 'data' - file content
+/// * 'overwrite' - whether to overwrite the file if it already exists
 #[ic_cdk::update]
 fn save(path:String, mime_type:String, data:Vec<u8>, overwrite:bool) -> Result<(), Error> {
     // First, check path
@@ -503,6 +353,13 @@ fn save(path:String, mime_type:String, data:Vec<u8>, overwrite:bool) -> Result<(
     }
 }
 
+/// download a file to the canister (less than 2MiB)
+///
+/// # Arguments
+///
+/// * `path` - must start with ROOT and the parent directory must exist
+
+// TODO How to download more than 2MiB
 #[ic_cdk::query]
 fn load(path:String) -> Result<Vec<u8>, Error> {
     // First, check path 
@@ -534,6 +391,14 @@ fn load(path:String) -> Result<Vec<u8>, Error> {
     }
 }
 
+/// starts uploading a file to the canister (more than 2MiB)
+///
+/// # Arguments
+///
+/// * `path` - must start with ROOT and the parent directory must exist
+/// * `mimetype` - mimetype of the file
+/// * 'data' - file content
+/// * 'overwrite' - whether to overwrite the file if it already exists
 #[ic_cdk::update(name="beginUpload")]
 fn begin_upload(path:String, mime_type:String, overwrite:bool) -> Result<(), Error> {
     // First, check path 
@@ -570,6 +435,13 @@ fn begin_upload(path:String, mime_type:String, overwrite:bool) -> Result<(), Err
     })
 }
 
+/// uploads a chunk of the file to the canister
+///
+/// # Arguments
+///
+/// * `path` - must start with ROOT and the parent directory must exist
+/// * `start` - start index
+/// * 'data' - chunk of the file
 #[ic_cdk::update(name="sendData")]
 fn send_data(path:String, start:u64, data:Vec<u8>) -> Result<u64, Error> {
     let caller = caller();
@@ -603,6 +475,14 @@ fn send_data(path:String, start:u64, data:Vec<u8>) -> Result<u64, Error> {
     })
 }
 
+/// commits uploading a file
+///
+/// # Arguments
+///
+/// * `path` - must start with ROOT and the parent directory must exist
+/// * `mimetype` - mimetype of the file
+/// * 'data' - file content
+/// * 'overwrite' - whether to overwrite the file if it already exists
 #[ic_cdk::update(name="commitUpload")]
 fn commit_upload(path:String, size:u64, sha256:Option<[u8; 32]>) -> Result<(), Error> {
     let caller = caller();
@@ -703,6 +583,11 @@ fn commit_upload(path:String, size:u64, sha256:Option<[u8; 32]>) -> Result<(), E
     })
 }
 
+/// cancels uploading a file
+///
+/// # Arguments
+///
+/// * `path` - must start with ROOT and the parent directory must exist
 #[ic_cdk::update(name="cancelUpload")]
 fn cancel_upload(path:String) -> Result<(), Error> {
     let caller = caller();
@@ -723,7 +608,11 @@ fn cancel_upload(path:String) -> Result<(), Error> {
     })
 }
 
-// FIXME result should be more detailed
+/// deletes a file
+///
+/// # Arguments
+///
+/// * `path` - must start with ROOT and the parent directory must exist
 #[ic_cdk::update(name="delete")]
 fn delete(path:String) -> Result<(), Error> {
     validate_path(&path)?;
@@ -748,7 +637,11 @@ fn delete(path:String) -> Result<(), Error> {
     }
 }
 
-// FIXME result should be more detailed
+/// returns a list of the files/directories in the specified path
+///
+/// # Arguments
+///
+/// * `path` - must start with ROOT and the parent directory must exist
 #[ic_cdk::query(name="listFiles")]
 fn list_files(path:String) -> Result<Vec<String>, Error> {
     validate_path(&path)?;
@@ -780,7 +673,11 @@ fn list_files(path:String) -> Result<Vec<String>, Error> {
     Ok(files)
 }
 
-// FIXME result should be more detailed
+/// creates a directory
+///
+/// # Arguments
+///
+/// * `path` - must start with ROOT and the parent directory must exist
 #[ic_cdk::update(name="createDirectory")]
 fn create_directory(path:String) -> Result<(), Error> {
     validate_path(&path)?;
@@ -819,9 +716,14 @@ fn create_directory(path:String) -> Result<(), Error> {
     }
 }
 
-// FIXME result should be more detailed
+/// deletes a directory
+///
+/// # Arguments
+///
+/// * `path` - must start with ROOT and the parent directory must exist
+/// * 'recursively' - whether to delete recursively
 #[ic_cdk::update(name="deleteDirectory")]
-fn delete_directory(path:String) -> Result<(), Error> {
+fn delete_directory(path:String, recursively:bool) -> Result<(), Error> {
     validate_path(&path)?;
 
     let file_info = get_file_info(&path);
@@ -834,15 +736,33 @@ fn delete_directory(path:String) -> Result<(), Error> {
         return error!(ERROR_NOT_FOUND, "Directory not found");
     }
 
-    match fs::remove_dir(&path) {
-        Ok(_) => {
-            delete_file_info(&path);
-            Ok(())
-        },
-        Err(e) => error!(ERROR_UNKNOWN, format!("{:?}", e))
+    if recursively {
+        // delete recursively
+        // delete only if empty
+        match fs::remove_dir_all(&path) {
+            Ok(_) => {
+                delete_file_info(&path);
+                Ok(())
+            },
+            Err(e) => error!(ERROR_UNKNOWN, format!("{:?}", e))
+        }
+    } else {
+        // delete only if empty
+        match fs::remove_dir(&path) {
+            Ok(_) => {
+                delete_file_info(&path);
+                Ok(())
+            },
+            Err(e) => error!(ERROR_UNKNOWN, format!("{:?}", e))
+        }
     }
 }
 
+/// returns a file info
+///
+/// # Arguments
+///
+/// * `path` - must start with ROOT and the parent directory must exist
 #[ic_cdk::query(name="getInfo")]
 fn get_info(path:String) -> Result<Info, Error> {
     validate_path(&path)?;
@@ -867,25 +787,10 @@ fn get_info(path:String) -> Result<Info, Error> {
     }
 }
 
-#[ic_cdk::query(name="hasPermission")]
-fn has_permission(path:String) -> Result<Permission, Error> {
-    validate_path(&path)?;
-
-    let file_info = get_file_info(&path);
-    if file_info.is_none() {
-        return error!(ERROR_NOT_FOUND, "File not found");
-    }
-
-    let caller = caller();
-
-    // TODO optimize algorithm
-    Ok(Permission {
-        manageable: check_manage_permission(&caller, &path, file_info.as_ref()),
-        readable: check_read_permission(&caller, &path, file_info.as_ref()),
-        writable: check_write_permission(&caller, &path, file_info.as_ref()),
-    })
-}
-
+/// initilizes canistorage
+///
+/// # Arguments
+///
 pub fn init() ->() {
     let owner = caller();
     let now = time();
@@ -904,6 +809,206 @@ pub fn init() ->() {
         signature: None,
     }).unwrap();
 }
+
+
+/////////////////////////////////////////////////////////////////////////////
+// Internal functions
+/////////////////////////////////////////////////////////////////////////////
+
+/// Returns whether the specified path is manageable or not
+///
+/// # Arguments
+///
+/// * `principal` - Principal to check
+/// * `path` - must start with ROOT
+/// * `file_info` - FileInfo
+fn check_manage_permission(principal:&Principal, path:&String, file_info:Option<&FileInfo>) -> bool {
+    // First, check manageable of file_info
+    if let Some(info) = file_info {
+        if info.manageable.iter().any(|p| p == principal) {
+            // Found manageable
+            return true;
+        }
+    }
+    if path == ROOT {
+        // Second, check if ROOT
+        false
+    } else {
+        // Then, check parent file_info recursively
+        let parent_path = match path.rfind("/") {
+            Some(index) => {
+                path[0..index].to_string()
+            },
+            None => {
+                // Special case: "" -> "/""
+                "/".to_string()
+            }
+        };
+        let parent_info = get_file_info(&parent_path);
+        check_manage_permission(principal, &parent_path, parent_info.as_ref())
+    }
+}
+
+/// Returns whether the specified path is readable or not
+///
+/// # Arguments
+///
+/// * `principal` - Principal to check
+/// * `path` - must start with ROOT
+/// * `file_info` - FileInfo
+fn check_read_permission(principal:&Principal, path:&String, file_info:Option<&FileInfo>) -> bool {
+    // First, check readable of file_info
+    if let Some(info) = file_info {
+        if info.readable.iter().any(|p| p == principal) {
+            // Found readable
+            return true;
+        }
+    }
+    if path == ROOT {
+        // Second, check if ROOT
+        false
+    } else {
+        // Then, check parent file_info recursively
+        let parent_path = match path.rfind("/") {
+            Some(index) => {
+                path[0..index].to_string()
+            },
+            None => {
+                // Special case: "" -> "/""
+                "/".to_string()
+            }
+        };
+        let parent_info = get_file_info(&parent_path);
+        check_read_permission(principal, &parent_path, parent_info.as_ref())
+    }
+}
+
+/// Returns whether the specified path is writable or not
+///
+/// # Arguments
+///
+/// * `principal` - Principal to check
+/// * `path` - must start with ROOT
+/// * `file_info` - FileInfo
+fn check_write_permission(principal:&Principal, path:&String, file_info:Option<&FileInfo>) -> bool {
+    // First, check writeable of file_info
+    if let Some(info) = file_info {
+        if info.writable.iter().any(|p| p == principal) {
+            // Found writeable
+            return true;
+        }
+    }
+    if path == ROOT {
+        // Second, check if ROOT
+        false
+    } else {
+        // Then, check parent file_info recursively
+        let parent_path = match path.rfind("/") {
+            Some(index) => {
+                path[0..index].to_string()
+            },
+            None => {
+                // Special case: "" -> "/""
+                "/".to_string()
+            }
+        };
+        let parent_info = get_file_info(&parent_path);
+        check_write_permission(principal, &parent_path, parent_info.as_ref())
+    }
+}
+
+/// validates the specified path
+///
+/// # Arguments
+///
+/// * `path` - path to check
+/// 
+fn validate_path(path:&String) -> Result<(), Error> {
+    // length
+    if path.len() == 0 {
+        return error!(ERROR_INVALID_PATH, "Path is empty");
+    }
+
+    // starts with
+    if path.starts_with(ROOT) == false {
+        return error!(ERROR_INVALID_PATH, "Not full path");
+    }
+    #[cfg(not(test))]
+    if path.starts_with("/") == false {
+        return error!(ERROR_INVALID_PATH, "Not full path");
+    }
+
+    // invalid characters
+    if ["..", "`"].iter().any(|s| path.contains(s)) {
+        return error!(ERROR_INVALID_PATH, "Path contains invalid characters");
+    }
+    Ok(())
+}
+
+/// returns file info path (metadata of file)
+fn file_info_path(path:&String) -> String {
+    if path == "/" {
+        return "/`".to_string();
+    }
+    match path.rfind("/") {
+        Some(index) => {
+            format!("{}`{}", &path[0..index +1], &path[index + 1..])
+        },
+        None => {
+            // FIXME Not expected
+            format!("`{}", path)
+        }
+    }
+}
+
+fn get_file_info(path:&String) -> Option<FileInfo> {
+    match File::open(file_info_path(path)) {
+        Ok(file) => {
+            let reader = BufReader::new(file);
+            let result = serde_cbor::from_reader(reader).unwrap();
+            Some(result)
+       },
+        Err(_) => {
+            None
+        }
+    }
+}
+
+fn set_file_info(path:&String, info:&FileInfo) -> Result<(), Error> {
+    let info_path = file_info_path(path);
+    let file = OpenOptions::new().write(true).create(true).truncate(true).open(&info_path);
+    match file {
+        Ok(mut file) => {
+            match file.write_all(&serde_cbor::to_vec(info).unwrap()) {
+                Ok(()) => Ok(()),
+                Err(e) => error!(ERROR_UNKNOWN, format!("{:?}", e))
+            }
+        },
+        Err(e) => error!(ERROR_UNKNOWN, format!("{:?}", e))
+    }
+}
+
+fn delete_file_info(path:&String) -> () {
+    // TODO Error handling
+    let _ = fs::remove_file(file_info_path(path));
+}
+
+// returns temporary path for saving a file
+fn temp_path(path:&String) -> String {
+    if path == "/" {
+        return "/``".to_string();
+    }
+    match path.rfind("/") {
+        Some(index) => {
+            format!("{}``{}", &path[0..index +1], &path[index + 1..])
+        },
+        None => {
+            // FIXME Not expected
+            format!("``{}", path)
+        }
+    }
+}
+
 
 /////////////////////////////////////////////////////////////////////////////
 // Unit Test

@@ -26,7 +26,7 @@ service : () -> {
   commitUpload : (text, nat64, opt blob) -> (Result);
   createDirectory : (text) -> (Result);
   delete : (text) -> (Result);
-  deleteDirectory : (text) -> (Result);
+  deleteDirectory : (text, bool) -> (Result);
   getInfo : (text) -> (Result_1) query;
   hasPermission : (text) -> (Result_2) query;
   listFiles : (text) -> (Result_3) query;

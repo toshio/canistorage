@@ -1,11 +1,24 @@
 type Error = record { code : nat32; message : text };
+type FileInfoForPoC = record {
+  updated_at : nat64;
+  creator : principal;
+  writable : vec principal;
+  path : text;
+  size : nat64;
+  created_at : nat64;
+  children : opt vec FileInfoForPoC;
+  mimetype : text;
+  readable : vec principal;
+  updater : principal;
+  manageable : vec principal;
+};
 type Info = record {
   updated_at : nat64;
   creator : principal;
   sha256 : opt blob;
   size : nat64;
-  mime_type : text;
   created_at : nat64;
+  mimetype : text;
   updater : principal;
 };
 type Permission = record {
@@ -14,11 +27,12 @@ type Permission = record {
   manageable : bool;
 };
 type Result = variant { Ok; Err : Error };
-type Result_1 = variant { Ok : Info; Err : Error };
-type Result_2 = variant { Ok : Permission; Err : Error };
-type Result_3 = variant { Ok : vec text; Err : Error };
-type Result_4 = variant { Ok : blob; Err : Error };
-type Result_5 = variant { Ok : nat64; Err : Error };
+type Result_1 = variant { Ok : FileInfoForPoC; Err : Error };
+type Result_2 = variant { Ok : Info; Err : Error };
+type Result_3 = variant { Ok : Permission; Err : Error };
+type Result_4 = variant { Ok : vec text; Err : Error };
+type Result_5 = variant { Ok : blob; Err : Error };
+type Result_6 = variant { Ok : nat64; Err : Error };
 service : () -> {
   addPermission : (principal, text, bool, bool, bool) -> (Result);
   beginUpload : (text, text, bool) -> (Result);
@@ -27,12 +41,13 @@ service : () -> {
   createDirectory : (text) -> (Result);
   delete : (text) -> (Result);
   deleteDirectory : (text, bool) -> (Result);
-  getInfo : (text) -> (Result_1) query;
-  hasPermission : (text) -> (Result_2) query;
-  listFiles : (text) -> (Result_3) query;
-  load : (text) -> (Result_4) query;
+  getAllInfoForPoC : () -> (Result_1) query;
+  getInfo : (text) -> (Result_2) query;
+  hasPermission : (text) -> (Result_3) query;
+  listFiles : (text) -> (Result_4) query;
+  load : (text) -> (Result_5) query;
   removePermission : (principal, text, bool, bool, bool) -> (Result);
   save : (text, text, blob, bool) -> (Result);
-  sendData : (text, nat64, blob) -> (Result_5);
+  sendData : (text, nat64, blob) -> (Result_6);
   version : () -> (text) query;
 }

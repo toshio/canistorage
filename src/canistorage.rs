@@ -3,6 +3,7 @@
 /// Copyright© 2025 toshio
 ///
 use std::cell::RefCell;
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fs;
 use std::fs::{File, OpenOptions};
@@ -16,10 +17,11 @@ const MIMETYPE_DIRECTORY: &str = "canistorage/directory";
 const ERROR_NOT_FOUND: u32 = 1; // File or directory not found
 const ERROR_ALREADY_EXISTS: u32 = 2; // Fire or directory already exists
 const ERROR_INVALID_PATH: u32 = 3;
-const ERROR_PERMISSION_DENIED: u32 = 4;
-const ERROR_INVALID_SEQUENCE: u32 = 5;
-const ERROR_INVALID_SIZE: u32 = 6;
-const ERROR_INVALID_HASH: u32 = 7;
+const ERROR_INVALID_MIMETYPE: u32 = 4;
+const ERROR_PERMISSION_DENIED: u32 = 5;
+const ERROR_INVALID_SEQUENCE: u32 = 6;
+const ERROR_INVALID_SIZE: u32 = 7;
+const ERROR_INVALID_HASH: u32 = 8;
 const ERROR_UNKNOWN: u32 = u32::MAX;
 
 /////////////////////////////////////////////////////////////////////////////
@@ -96,12 +98,18 @@ pub struct FileInfo {
     created_at: u64, // milliseconds
     updater: Principal,
     updated_at: u64, // milliseconds
-    mime_type: String,
+    mimetype: String,
     manageable: Vec<Principal>, // Grant or Revoke permission
     readable: Vec<Principal>,
     writable: Vec<Principal>,
     sha256: Option<[u8; 32]>,
     signature: Option<Vec<u8>>,
+}
+
+impl FileInfo {
+    fn is_dir(&self) -> bool {
+        self.mimetype == MIMETYPE_DIRECTORY
+    }
 }
 
 #[derive(CandidType, Serialize, Deserialize)]
@@ -118,7 +126,7 @@ pub struct Info {
     created_at: u64, // milliseconds
     updater: Principal,
     updated_at: u64, // milliseconds
-    mime_type: String,
+    mimetype: String,
     sha256: Option<[u8; 32]>,
 }
 
@@ -126,7 +134,7 @@ pub struct Uploading {
     owner: Principal,
     size: u64,
     updated_at: u64,
-    mime_type: String,
+    mimetype: String,
     chunk: HashMap<u64, Vec<u8>>,
 }
 
@@ -152,7 +160,7 @@ thread_local! {
 /// * `path` - must start with ROOT
 /// * `file_info` - FileInfo
 #[ic_cdk::update(name="addPermission")]
-fn add_permission(principal:Principal, path:String, manageable:bool, readable:bool, writable:bool) -> Result<(), Error> {
+pub fn add_permission(principal:Principal, path:String, manageable:bool, readable:bool, writable:bool) -> Result<(), Error> {
     validate_path(&path)?;
 
     let caller = caller();
@@ -198,7 +206,7 @@ fn add_permission(principal:Principal, path:String, manageable:bool, readable:bo
 /// * `path` - must start with ROOT
 /// * `file_info` - FileInfo
 #[ic_cdk::update(name="removePermission")]
-fn remove_permission(principal:Principal, path:String, manageable:bool, readable:bool, writable:bool) -> Result<(), Error> {
+pub fn remove_permission(principal:Principal, path:String, manageable:bool, readable:bool, writable:bool) -> Result<(), Error> {
     validate_path(&path)?;
 
     let caller = caller();
@@ -248,7 +256,7 @@ fn remove_permission(principal:Principal, path:String, manageable:bool, readable
 /// * `path` - must start with ROOT
 ///
 #[ic_cdk::query(name="hasPermission")]
-fn has_permission(path:String) -> Result<Permission, Error> {
+pub fn has_permission(path:String) -> Result<Permission, Error> {
     validate_path(&path)?;
 
     let file_info = get_file_info(&path);
@@ -275,7 +283,7 @@ fn has_permission(path:String) -> Result<Permission, Error> {
 /// * 'data' - file content
 /// * 'overwrite' - whether to overwrite the file if it already exists
 #[ic_cdk::update]
-fn save(path:String, mime_type:String, data:Vec<u8>, overwrite:bool) -> Result<(), Error> {
+pub fn save(path:String, mimetype:String, data:Vec<u8>, overwrite:bool) -> Result<(), Error> {
     // First, check path
     validate_path(&path)?;
 
@@ -302,6 +310,11 @@ fn save(path:String, mime_type:String, data:Vec<u8>, overwrite:bool) -> Result<(
         // TODO 親ディレクトリ存在チェック (file.write_allでエラーとなるが事前に抑止)
     }
 
+    // Fourth, check mimetype
+    if mimetype.is_empty() || mimetype == MIMETYPE_DIRECTORY {
+        return error!(ERROR_INVALID_MIMETYPE, "Invalid mimetype");
+    }
+
     // save as temp, and then rename it
     let temp_path = temp_path(&path);
     let file = OpenOptions::new().write(true).create(true).truncate(true).open(&temp_path);
@@ -315,7 +328,7 @@ fn save(path:String, mime_type:String, data:Vec<u8>, overwrite:bool) -> Result<(
                             // Update
                             info.size = data.len() as u64;
                             info.updated_at = now;
-                            info.mime_type = mime_type;
+                            info.mimetype = mimetype;
                             info.sha256 = Some(Sha256::digest(data).into());
                             info.signature = None;
                             info
@@ -328,7 +341,7 @@ fn save(path:String, mime_type:String, data:Vec<u8>, overwrite:bool) -> Result<(
                                 created_at: now,
                                 updater: caller,
                                 updated_at: now,
-                                mime_type: mime_type,
+                                mimetype: mimetype,
                                 manageable: Vec::new(),
                                 readable: Vec::new(),
                                 writable: Vec::new(),
@@ -361,7 +374,7 @@ fn save(path:String, mime_type:String, data:Vec<u8>, overwrite:bool) -> Result<(
 
 // TODO How to download more than 2MiB
 #[ic_cdk::query]
-fn load(path:String) -> Result<Vec<u8>, Error> {
+pub fn load(path:String) -> Result<Vec<u8>, Error> {
     // First, check path 
     validate_path(&path)?;
 
@@ -400,7 +413,7 @@ fn load(path:String) -> Result<Vec<u8>, Error> {
 /// * 'data' - file content
 /// * 'overwrite' - whether to overwrite the file if it already exists
 #[ic_cdk::update(name="beginUpload")]
-fn begin_upload(path:String, mime_type:String, overwrite:bool) -> Result<(), Error> {
+pub fn begin_upload(path:String, mimetype:String, overwrite:bool) -> Result<(), Error> {
     // First, check path 
     validate_path(&path)?;
 
@@ -428,7 +441,7 @@ fn begin_upload(path:String, mime_type:String, overwrite:bool) -> Result<(), Err
             owner: caller,
             updated_at: now,
             size: 0,
-            mime_type,
+            mimetype,
             chunk: HashMap::new(),
         });
         Ok(())
@@ -443,7 +456,7 @@ fn begin_upload(path:String, mime_type:String, overwrite:bool) -> Result<(), Err
 /// * `start` - start index
 /// * 'data' - chunk of the file
 #[ic_cdk::update(name="sendData")]
-fn send_data(path:String, start:u64, data:Vec<u8>) -> Result<u64, Error> {
+pub fn send_data(path:String, start:u64, data:Vec<u8>) -> Result<u64, Error> {
     let caller = caller();
 
     UPLOADING.with(|uploading| {
@@ -484,7 +497,7 @@ fn send_data(path:String, start:u64, data:Vec<u8>) -> Result<u64, Error> {
 /// * 'data' - file content
 /// * 'overwrite' - whether to overwrite the file if it already exists
 #[ic_cdk::update(name="commitUpload")]
-fn commit_upload(path:String, size:u64, sha256:Option<[u8; 32]>) -> Result<(), Error> {
+pub fn commit_upload(path:String, size:u64, sha256:Option<[u8; 32]>) -> Result<(), Error> {
     let caller = caller();
 
     UPLOADING.with(|uploading| {
@@ -539,7 +552,7 @@ fn commit_upload(path:String, size:u64, sha256:Option<[u8; 32]>) -> Result<(), E
                                     // Update
                                     info.size = size;
                                     info.updated_at = now;
-                                    info.mime_type = value.mime_type.clone();
+                                    info.mimetype = value.mimetype.clone();
                                     info.sha256 = sha256;
                                     info.signature = None;
                                     info
@@ -552,7 +565,7 @@ fn commit_upload(path:String, size:u64, sha256:Option<[u8; 32]>) -> Result<(), E
                                         created_at: now,
                                         updater: caller,
                                         updated_at: now,
-                                        mime_type: value.mime_type.clone(),
+                                        mimetype: value.mimetype.clone(),
                                         manageable: Vec::new(),
                                         readable: Vec::new(),
                                         writable: Vec::new(),
@@ -589,7 +602,7 @@ fn commit_upload(path:String, size:u64, sha256:Option<[u8; 32]>) -> Result<(), E
 ///
 /// * `path` - must start with ROOT and the parent directory must exist
 #[ic_cdk::update(name="cancelUpload")]
-fn cancel_upload(path:String) -> Result<(), Error> {
+pub fn cancel_upload(path:String) -> Result<(), Error> {
     let caller = caller();
 
     UPLOADING.with(|uploading| {
@@ -614,7 +627,7 @@ fn cancel_upload(path:String) -> Result<(), Error> {
 ///
 /// * `path` - must start with ROOT and the parent directory must exist
 #[ic_cdk::update(name="delete")]
-fn delete(path:String) -> Result<(), Error> {
+pub fn delete(path:String) -> Result<(), Error> {
     validate_path(&path)?;
 
     // Second, check permission
@@ -643,7 +656,7 @@ fn delete(path:String) -> Result<(), Error> {
 ///
 /// * `path` - must start with ROOT and the parent directory must exist
 #[ic_cdk::query(name="listFiles")]
-fn list_files(path:String) -> Result<Vec<String>, Error> {
+pub fn list_files(path:String) -> Result<Vec<String>, Error> {
     validate_path(&path)?;
 
     let file_info = get_file_info(&path);
@@ -679,7 +692,7 @@ fn list_files(path:String) -> Result<Vec<String>, Error> {
 ///
 /// * `path` - must start with ROOT and the parent directory must exist
 #[ic_cdk::update(name="createDirectory")]
-fn create_directory(path:String) -> Result<(), Error> {
+pub fn create_directory(path:String) -> Result<(), Error> {
     validate_path(&path)?;
 
     // Check write permission
@@ -702,7 +715,7 @@ fn create_directory(path:String) -> Result<(), Error> {
                 created_at: time(),
                 updater: caller,
                 updated_at: time(),
-                mime_type: MIMETYPE_DIRECTORY.to_string(),
+                mimetype: MIMETYPE_DIRECTORY.to_string(),
                 manageable: Vec::new(),
                 readable: Vec::new(),
                 writable: Vec::new(),
@@ -723,7 +736,7 @@ fn create_directory(path:String) -> Result<(), Error> {
 /// * `path` - must start with ROOT and the parent directory must exist
 /// * 'recursively' - whether to delete recursively
 #[ic_cdk::update(name="deleteDirectory")]
-fn delete_directory(path:String, recursively:bool) -> Result<(), Error> {
+pub fn delete_directory(path:String, recursively:bool) -> Result<(), Error> {
     validate_path(&path)?;
 
     let file_info = get_file_info(&path);
@@ -764,7 +777,7 @@ fn delete_directory(path:String, recursively:bool) -> Result<(), Error> {
 ///
 /// * `path` - must start with ROOT and the parent directory must exist
 #[ic_cdk::query(name="getInfo")]
-fn get_info(path:String) -> Result<Info, Error> {
+pub fn get_info(path:String) -> Result<Info, Error> {
     validate_path(&path)?;
 
     let file_info = get_file_info(&path);
@@ -780,7 +793,7 @@ fn get_info(path:String) -> Result<Info, Error> {
             created_at: info.created_at,
             updater: info.updater,
             updated_at: info.updated_at,
-            mime_type: info.mime_type,
+            mimetype: info.mimetype,
             sha256: info.sha256
         }),
         None => error!(ERROR_NOT_FOUND, "File not found")
@@ -801,7 +814,7 @@ pub fn init() ->() {
         created_at: now,
         updater: owner,
         updated_at: now,
-        mime_type: MIMETYPE_DIRECTORY.to_string(),
+        mimetype: MIMETYPE_DIRECTORY.to_string(),
         manageable: vec![owner],
         readable: vec![owner],
         writable: vec![owner],
@@ -1011,6 +1024,95 @@ fn temp_path(path:&String) -> String {
 
 
 /////////////////////////////////////////////////////////////////////////////
+//
+// Implementation for PoC only
+//
+// FIXME Remove before production
+#[derive(CandidType, Serialize, Deserialize)]
+pub struct FileInfoForPoC {
+    size: u64,
+    creator: Principal,
+    created_at: u64,
+    updater: Principal,
+    updated_at: u64,
+    mimetype: String,
+    path: String,
+    manageable: Vec<Principal>, // Grant or Revoke permission
+    readable: Vec<Principal>,
+    writable: Vec<Principal>,
+    children: Option<Vec<FileInfoForPoC>>,
+}
+
+impl FileInfoForPoC {
+    fn is_dir(&self) -> bool {
+        self.mimetype == MIMETYPE_DIRECTORY
+    }
+}
+
+// DEBUG logics for PoC
+#[ic_cdk::query(name="getAllInfoForPoC")]
+pub fn get_all_info_for_poc() -> Result<FileInfoForPoC, Error> {
+    get_info_for_poc(ROOT.to_string())
+}
+
+pub fn get_info_for_poc(path:String) -> Result<FileInfoForPoC, Error> {
+
+    match get_file_info(&path) {
+        Some(info) => {
+            let children = if info.is_dir() {
+                // Directory
+                let mut children:Vec<FileInfoForPoC> = Vec::new();
+                let entries = fs::read_dir(&path).unwrap();
+                let _ = entries.map(| entry | {
+                    let entry = entry.unwrap();
+                    let file_name = entry.path().file_name().unwrap().to_string_lossy().into_owned();
+                    if !file_name.starts_with("`") {
+                        let file_path = entry.path().to_string_lossy().into_owned();
+                        children.push(get_info_for_poc(file_path).unwrap());
+                    }
+                }).collect::<Vec<()>>();
+
+                children.sort_by(|a, b| 
+                    if a.is_dir() {
+                        if b.is_dir() {
+                            a.path.cmp(&b.path)
+                        } else {
+                            Ordering::Less
+                        }
+                    } else if b.is_dir() {
+                        Ordering::Greater
+                    } else {
+                        a.path.cmp(&b.path)
+                    }
+                );
+                Some(children)
+            } else {
+                // File
+                None
+            };
+
+            Ok(FileInfoForPoC {
+                path,
+                size: info.size,
+                creator: info.creator,
+                created_at: info.created_at,
+                updater: info.updater,
+                updated_at: info.updated_at,
+                mimetype: info.mimetype,
+                manageable: info.manageable,
+                readable: info.readable,
+                writable: info.writable,
+                children,
+            })
+        }
+        None => {
+            return error!(ERROR_NOT_FOUND, "Directory not found");
+        }
+    }
+}
+
+
+/////////////////////////////////////////////////////////////////////////////
 // Unit Test
 /////////////////////////////////////////////////////////////////////////////
 #[cfg(test)]
@@ -1033,7 +1135,7 @@ mod tests {
             created_at: 0,
             updater: caller(),
             updated_at: 0,
-            mime_type: MIMETYPE_DIRECTORY.to_string(),
+            mimetype: MIMETYPE_DIRECTORY.to_string(),
             manageable: vec![caller()],
             readable: vec![caller()],
             writable: vec![caller()],
@@ -1110,7 +1212,7 @@ mod tests {
             created_at: 0,
             updater: caller(),
             updated_at: 0,
-            mime_type: "".to_string(),
+            mimetype: "".to_string(),
             manageable: Vec::new(),
             readable: vec![principal_readable.clone()],
             writable: vec![principal_writable.clone()],
@@ -1141,7 +1243,7 @@ mod tests {
             created_at: 0,
             updater: caller(),
             updated_at: 0,
-            mime_type: "".to_string(),
+            mimetype: "".to_string(),
             manageable: Vec::new(),
             readable: vec![principal_child_only.clone()],
             writable: vec![principal_child_only.clone()],

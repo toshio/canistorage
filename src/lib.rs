@@ -10,6 +10,7 @@ use crate::canistorage::{
     Error,
     Permission,
     Info,
+    FileInfoForPoC, // for PoC
 }; // for export_candid!()
 
 /// wasi2ic

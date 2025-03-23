@@ -13,6 +13,7 @@ use candid::{CandidType, Principal};
 use sha2::{Sha256, Digest};
 
 const MIMETYPE_DIRECTORY: &str = "canistorage/directory";
+const MAX_PATH:usize = 1024;
 
 const ERROR_NOT_FOUND: u32 = 1; // File or directory not found
 const ERROR_ALREADY_EXISTS: u32 = 2; // Fire or directory already exists
@@ -287,14 +288,19 @@ pub fn save(path:String, mimetype:String, data:Vec<u8>, overwrite:bool) -> Resul
     // First, check path
     validate_path(&path)?;
 
-    // Second, check permission
+    // Second, check mimetype
+    if mimetype.is_empty() || mimetype == MIMETYPE_DIRECTORY {
+        return error!(ERROR_INVALID_MIMETYPE, "Invalid mimetype");
+    }
+
+    // Third check permission
     let caller = caller();
     let file_info = get_file_info(&path);
     if !check_write_permission(&caller, &path, file_info.as_ref()) {
         return error!(ERROR_PERMISSION_DENIED, "Permission denied");
     }
 
-    // Check Uploading
+    // Forth Uploading
     let uploading = UPLOADING.with(|uploading| {
         let map = uploading.borrow();
         map.get(&path).is_some() // TODO expired check
@@ -303,16 +309,14 @@ pub fn save(path:String, mimetype:String, data:Vec<u8>, overwrite:bool) -> Resul
       return error!(ERROR_ALREADY_EXISTS, "File already exists");
     }
 
-    // Third, check whether file exists or not
+    // Fifth, check whether file exists or not
     if file_info.is_some() && overwrite == false {
-        return error!(ERROR_ALREADY_EXISTS, "File already exists"); // TODO File or directory
+        return error!(ERROR_ALREADY_EXISTS, "File already exists");
     } else {
-        // TODO 親ディレクトリ存在チェック (file.write_allでエラーとなるが事前に抑止)
-    }
-
-    // Fourth, check mimetype
-    if mimetype.is_empty() || mimetype == MIMETYPE_DIRECTORY {
-        return error!(ERROR_INVALID_MIMETYPE, "Invalid mimetype");
+        let parent_info = get_file_info(&parnet_path(&path));
+        if parent_info.is_none() || !parent_info.unwrap().is_dir() {
+            return error!(ERROR_NOT_FOUND, "Parent directory not found");
+        }
     }
 
     // save as temp, and then rename it
@@ -417,16 +421,35 @@ pub fn begin_upload(path:String, mimetype:String, overwrite:bool) -> Result<(), 
     // First, check path 
     validate_path(&path)?;
 
-    // Second, check permission
+    // Second, check mimetype
+    if mimetype.is_empty() || mimetype == MIMETYPE_DIRECTORY {
+        return error!(ERROR_INVALID_MIMETYPE, "Invalid mimetype");
+    }
+    
+    // Third check permission
     let caller = caller();
     let file_info = get_file_info(&path);
     if !check_write_permission(&caller, &path, file_info.as_ref()) {
         return error!(ERROR_PERMISSION_DENIED, "Permission denied");
     }
 
-    // Third, check whether file exists or not
+    // Forth Uploading
+    let uploading = UPLOADING.with(|uploading| {
+        let map = uploading.borrow();
+        map.get(&path).is_some() // TODO expired check
+    });
+    if uploading {
+      return error!(ERROR_ALREADY_EXISTS, "File already exists");
+    }
+
+    // Fifth, check whether file exists or not
     if file_info.is_some() && overwrite == false {
-        return error!(ERROR_ALREADY_EXISTS, "File already exists"); // TODO File or directory
+        return error!(ERROR_ALREADY_EXISTS, "File already exists");
+    } else {
+        let parent_info = get_file_info(&parnet_path(&path));
+        if parent_info.is_none() || !parent_info.unwrap().is_dir() {
+            return error!(ERROR_NOT_FOUND, "Parent directory not found");
+        }
     }
 
     UPLOADING.with(|uploading| {
@@ -706,6 +729,12 @@ pub fn create_directory(path:String) -> Result<(), Error> {
         return error!(ERROR_ALREADY_EXISTS, "Directory already exists"); // FIXME Dir or file exists
     }
 
+    // check parents
+    let parent_info = get_file_info(&parnet_path(&path));
+    if parent_info.is_none() || !parent_info.unwrap().is_dir() {
+        return error!(ERROR_NOT_FOUND, "Parent directory not found");
+    }
+
     match fs::create_dir(&path) {
         Ok(_) => {
             // create file_info
@@ -938,19 +967,23 @@ fn check_write_permission(principal:&Principal, path:&String, file_info:Option<&
 /// 
 fn validate_path(path:&String) -> Result<(), Error> {
     // length
-    if path.len() == 0 {
+    let length = path.len();
+    if length == 0 {
         return error!(ERROR_INVALID_PATH, "Path is empty");
+    } else if length > MAX_PATH {
+        return error!(ERROR_INVALID_PATH, "Path is too long");
     }
 
     // starts with
     if path.starts_with(ROOT) == false {
         return error!(ERROR_INVALID_PATH, "Not full path");
     }
-    #[cfg(not(test))]
-    if path.starts_with("/") == false {
-        return error!(ERROR_INVALID_PATH, "Not full path");
-    }
 
+    // ends with '/' (except root)
+    if length > 1 && path.ends_with('/') {
+        return error!(ERROR_INVALID_PATH, "Ends with path separator (/)");
+    }
+    
     // invalid characters
     if ["..", "`"].iter().any(|s| path.contains(s)) {
         return error!(ERROR_INVALID_PATH, "Path contains invalid characters");
@@ -970,6 +1003,17 @@ fn file_info_path(path:&String) -> String {
         None => {
             // FIXME Not expected
             format!("`{}", path)
+        }
+    }
+}
+
+fn parnet_path(path:&String) -> String {
+    if path == "/" { // Not expected
+        "".to_string()
+    } else {
+        match path.rfind("/") {
+            Some(index) => format!("{}", &path[0..index]),
+            None => "".to_string() // not expected
         }
     }
 }
@@ -1108,6 +1152,35 @@ pub fn get_info_for_poc(path:String) -> Result<FileInfoForPoC, Error> {
         None => {
             return error!(ERROR_NOT_FOUND, "Directory not found");
         }
+    }
+}
+
+// DEBUG logics for PoC
+#[ic_cdk::update(name="forceResetForPoC")]
+pub fn force_reset_for_poc() -> Result<(), Error> {
+    let path = ROOT.to_string();
+    let file_info = get_file_info(&path);
+    match file_info {
+        Some(mut info) => {
+            // Remove all directories
+            let entries = fs::read_dir(&path).unwrap();
+            let _ = entries.map(| entry | {
+                let entry = entry.unwrap();
+                let child_path = entry.path().to_string_lossy().into_owned();
+                if entry.file_type().unwrap().is_dir() { 
+                    fs::remove_dir_all(&child_path).unwrap();
+                } else {
+                    fs::remove_file(&child_path).unwrap();
+                }
+            }).collect::<Vec<()>>();
+
+            // Keep permissions
+            info.updated_at = time();
+            info.updater = caller();
+            set_file_info(&path, &info)?;
+            Ok(())
+        },
+        None => error!(ERROR_NOT_FOUND, "Reset failed")
     }
 }
 

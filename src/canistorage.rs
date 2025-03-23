@@ -140,11 +140,14 @@ pub struct Uploading {
 }
 
 /// TODO Downloading for bigger than 2MiB
+/*
 pub struct Download {
     size: u64,
     downloaded_at: u64,
     chunk: Vec<u8>,
 }
+*/
+
 
 /////////////////////////////////////////////////////////////////////////////
 // Global Variables

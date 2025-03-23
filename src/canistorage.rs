@@ -139,6 +139,12 @@ pub struct Uploading {
     chunk: HashMap<u64, Vec<u8>>,
 }
 
+/// TODO Downloading for bigger than 2MiB
+pub struct Download {
+    size: u64,
+    downloaded_at: u64,
+    chunk: Vec<u8>,
+}
 
 /////////////////////////////////////////////////////////////////////////////
 // Global Variables
@@ -398,7 +404,7 @@ pub fn load(path:String) -> Result<Vec<u8>, Error> {
     match File::open(path) {
         Ok(mut file) => {
             let mut buffer = Vec::new();
-            let _size = file.read_to_end(&mut buffer); // TODO size handling
+            let _size = file.read_to_end(&mut buffer); // TODO bigger size handling
             Ok(buffer)
         },
         Err(e) => match e.kind() { // Not expected

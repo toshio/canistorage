@@ -2,17 +2,24 @@
 
 ## Concept
 
-Internet上にオープン仕様の分散型ストレージを開発するプロジェクトです。
+Canistorageは、Internet Computerの仕組みを利用した分散型のクラウドストレージです。  
+まだ開発の初期段階です。
 
-特定のクラウドベンダーには依存しない分散型クラウド環境であるInternet Computer上に、オープンな仕様の分散型ストレージを **1 Canister/人** という単位で用意し、個人のデータをただファイルとして保存するという目的だけにとどまらず、様々なWebサービスとも連携して、個人のデータ主権を取り戻せる仕組みづくりを考えていきたいです。
+Internet Computer上でユーザーやアプリケーションを識別するための『Principal』ベースでアクセス制御を行い、
+個人や家族（または企業）のデータの記録・保管していくことを目指します。
 
-## 提供機能
+これから先、数十年、数百年という長期にわたってデータを管理していくことを考えた場合に、ベンダーロックインされることなく、
+また、データの完全性・可用性の観点で、アクセスI/Fやデータ構造などの仕様がオープンに議論されて決定していくことは重要です。  
+Canistorageは、そのような観点から、オープンな仕様でデータを管理することを目指しています。
 
-## 公開API
+Pricipalごとにディレクトリやファイルのアクセス制御が可能なため、使用するDAppごとに異なるPrincipalを用いることによって（つまり、Internet IdentityでDAppごとに異なるPrincipalが割り当てられる仕組みを利用することにより）、Dappごとにアクセス制御を実現できます。
 
-| メソッド名 | 種別  | 概要                 |
-| :--------- | :---- | :------------------- |
-| version    | query | バージョン情報を返す |
+また、今後、様々なCanisterが自律分散型で動作していくという世界線で、自分のデータがどこにあり（→Canistorage内に集約されていて）、どのCanisterがどのデータに対して読取権限があるのか、Principalベースでのアクセス制御できる分散型のクラウドストレージは必要となるでしょう。
+
+本来、Canister自体がWASIに対応しPrincipalベースのアクセス制御を有するファイルシステム機能を持っていることが望ましいと個人的には考えており、  
+このPoCは、あくまでもCanisterにまともなファイルシステム機能が実装されるまでの過渡的な実装にすぎません。
+
+将来的には、単なるファイルの管理機能だけではなく、DBなど非ファイルデータやバージョン管理機能、改ざん抑止、タイムロック、署名など、より高度なデータ管理機能を、オープンなI/F仕様を検討し取り込んでいければと思います。
 
 ## マイルストーン
 
@@ -20,7 +27,68 @@ Internet上にオープン仕様の分散型ストレージを開発するプロ
 | :--------- | :--------------------------------------- |
 | 0.1.0      | PoC 基本的なファイル操作と権限制御を実装 |
 
+## Canistorage公開インターフェース
+
+Canistorage v0.1.0では、以下の公開メソッドを提供しています。
+
+| メソッド名                                                    | 種別   | 概要                                                | 備考                           |
+| :------------------------------------------------------------ | :----- | :-------------------------------------------------- | :----------------------------- |
+| version                                                       | query  | バージョン情報を返す                                |                                |
+| listFiles                                                     | query  | 指定ディレクトリのファイル/ディレクトリ一覧を返す   |                                |
+| getInfo                                                       | query  | 指定ディレクトリ／ファイルの情報を返す              |                                |
+| createDirectory                                               | update | ディレクトリを作成する                              |                                |
+| deleteDirectory                                               | update | ディレクトリを削除する                              |                                |
+| save                                                          | update | ファイルを保存する (小サイズのファイル)             |                                |
+| beginUpload,<br/>sendData,<br/>commitUpload,<br/>cancelUpload | update | ファイルを保存する  大きいサイズのファイル）        |                                |
+| load                                                          | query  | ファイルを取得する (小サイズのファイル)             | 大きいサイズの取得は仕様検討中 |
+| delete                                                        | update | ファイルを削除する                                  |                                |
+| hasPermission                                                 | query  | ディレクトリに対する呼び出し元のアクセス権限を返す  |                                |
+| addPermission                                                 | update | ディレクトリ/ファイルに対してアクセス権限を付与する |                                |
+| removePermission                                              | update | ディレクトリ/ファイルからアクセス権限をはく奪する   |                                |
+| （getAllInfoForPoC）                                          | query  | ディレクトリ／ファイル情報一括取得                  | PoC用に一時作成                |
+| （forceResetForPoC）                                          | update | ストレージ初期化                                    | PoC用に一時作成                |
+
+## アクセス制御の仕様
+
+Canistorage v0.1.0では以下のアクセス制御を
+
+| アクセス権限の種類 | 概要                                                                           | 備考 |
+| :----------------- | :----------------------------------------------------------------------------- | :--- |
+| managable          | 指定ディレクトリ配下、または指定ファイルに対するアクセス権限を付与、剥奪できる |      |
+| readable           | 指定ディレクトリ配下、または指定ファイルに対して読み取りができる               |      |
+| writable           | 指定ディレクトリ配下、または指定ファイルに対して書き込みができる               |      |
+
+## 制限事項 (TODO)
+
+Canistorage v0.1.0における制限事項と課題について記載します。
+
+### アクセス権限の仕様
+
+アクセス権限についての整理がまだ不十分なので検討が必要です。
+
+- 権限は下位ディレクトリに継承される仕様としているため、配下にある一部ディレクトリに対してアクセス拒否する仕組みがない。
+- ファイル一覧取得の権限、ディレクトリ内のファイル作成・削除の権限、ファイル書き込み権限の分離
+- 自身に対する権限の制御 （自分自身に対してmanagable権限の剥奪は可？不可？）
+- グループ権限の仕組みの検討
+
+### ディレクトリ/ファイルのメタ情報
+
+Principalベースのファイルシステムの実現のために、[`ic-wasi-polyfill`](https://github.com/wasm-forge/ic-wasi-polyfill)の[`stable-fs`](https://github.com/wasm-forge/stable-fs)の仕組みを利用しています。
+
+各ディレクトリやファイルに対するアクセス権限などを管理するメタ情報は、ファイルシステムの一部としてLinuxの[inode](https://ja.wikipedia.org/wiki/Inode)のような形で実現されているものが望ましいのですが、一から新しいファイルシステムを設計することは難しいため、`ic-wasi-polyfill`を利用し、（非効率ではあるものの）メタ情報をファイルの形式で、1ファイルにつき1ファイルに対応づけて管理しています。
+
+暫定的に、以下のようにファイル名の先頭に、（きっとあまり使わないだろう）バッククォート(``  ` ``)を付与したファイルにメタ情報を格納しています。
+
+| 項目     | ファイル名                           | 備考 |
+| :------- | :----------------------------------- | :--- |
+| ファイル | `<fileName>`                         |      |
+| メタ情報 | `` `<fileName>`` | Leading backquote |      |
+
+ファイルシステムはCanister側の仕組みとして、一から設計され提供されていることが望ましいと個人的に考えており、公式が対応するまでの暫定的な仕組みです。
+
 ## ビルド & ローカル実行
+
+Canistorageをローカルの実行環境にデプロイして動作させる手順を示します。
 
 ### Setup
 
@@ -30,10 +98,17 @@ $ cargo install candid-extractor
 $ rustup target add wasm32-wasip1
 ```
 
+### Clone canistorage project from Github
+
+```bash
+$ git clone https://github.com/toshio/canistorage.git
+$ cd canistorage
+```
+
 ### Start Local Canister Runtime Environtment
 
 ```
-$ dfx start --clean --background --pocketic
+$ dfx start --clean --background
 ```
 
 ### Build & Deploy
@@ -42,20 +117,33 @@ $ dfx start --clean --background --pocketic
 $ dfx deploy
 ```
 
-###
+## 初期設定
+
+Canisterを新規デプロイした時点では、ルートディレクトリ（/）のみ存在し、デプロイしたユーザーのPrincipalによるアクセス権限（managable, readable, writable）が付与されています。
+
+このままでは、dfxコマンド経由でしかCanistorageのファイルにアクセスできないため、ディレクトリを作成したり、特定のPrincipalに対するアクセス許可を設定します。
+
+#### バージョン確認
 
 ```bash
 $ dfx canister call canistorage version
-("canistorage 0.0.0")
+("canistorage 0.1.0")
 ```
 
+#### ディレクトリ作成 (例)
 
-
-###
-
-```bash
-$ dfx canister call canistorage createDirectory '("/dir1")'
-$ dfx canister call canistorage save '("/file", "text/plain", vec {31; 32; 33}, true)'
+```
+$ dfx canister call canistorage createDirectory '("/temp")'
 ```
 
-$ dfx canister call canistorage add_permission '(principal "2vxsx-fae", "/", true, true)'
+#### パーミッション付与 (例)
+
+```
+$ dfx canister call canistorage addPermission '(principal "2vxsx-fae", "/temp", false, true, true)'
+```
+
+### 指定ディレクトリの情報を取得 (例)
+
+```
+$ dfx canister call canistorage getInfo '("/")'
+```

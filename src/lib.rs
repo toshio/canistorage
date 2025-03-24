@@ -25,7 +25,6 @@ thread_local! {
 fn init() {
     let wasi_memory = MEMORY_MANAGER.with(|m| m.borrow().get(WASI_MEMORY_ID));
     ic_wasi_polyfill::init_with_memory(&[0u8; 32], &[], wasi_memory);
-    canistorage::init();
 }
 
 #[ic_cdk::post_upgrade]

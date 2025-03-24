@@ -23,6 +23,7 @@ const ERROR_PERMISSION_DENIED: u32 = 5;
 const ERROR_INVALID_SEQUENCE: u32 = 6;
 const ERROR_INVALID_SIZE: u32 = 7;
 const ERROR_INVALID_HASH: u32 = 8;
+const ERROR_ALREADY_INITIALIZED: u32 = 9;
 const ERROR_UNKNOWN: u32 = u32::MAX;
 
 /////////////////////////////////////////////////////////////////////////////
@@ -139,7 +140,7 @@ pub struct Uploading {
     chunk: HashMap<u64, Vec<u8>>,
 }
 
-/// TODO Downloading for bigger than 2MiB
+// TODO Downloading for bigger than 2MiB
 /*
 pub struct Download {
     size: u64,
@@ -842,23 +843,33 @@ pub fn get_info(path:String) -> Result<Info, Error> {
 ///
 /// # Arguments
 ///
-pub fn init() ->() {
-    let owner = caller();
-    let now = time();
-    ic_cdk::print(format!("Root Permission to {}", owner));
-    set_file_info(&ROOT.to_string(), &FileInfo {
-        size: 0,
-        creator: owner,
-        created_at: now,
-        updater: owner,
-        updated_at: now,
-        mimetype: MIMETYPE_DIRECTORY.to_string(),
-        manageable: vec![owner],
-        readable: vec![owner],
-        writable: vec![owner],
-        sha256: None,
-        signature: None,
-    }).unwrap();
+#[ic_cdk::update(name="initCanistorage")]
+pub fn init_canistorage() -> Result<(), Error> {
+    let root = ROOT.to_string();
+    let file_info = get_file_info(&root);
+    match file_info {
+        Some(info) => {
+            error!(ERROR_ALREADY_INITIALIZED, format!("Canistorage already initialized by {}", info.creator))
+        },
+        None => {
+            let owner = caller();
+            let now = time();
+                
+            set_file_info(&root, &FileInfo {
+                size: 0,
+                creator: owner,
+                created_at: now,
+                updater: owner,
+                updated_at: now,
+                mimetype: MIMETYPE_DIRECTORY.to_string(),
+                manageable: vec![owner],
+                readable: vec![owner],
+                writable: vec![owner],
+                sha256: None,
+                signature: None,
+            })
+        }
+    }
 }
 
 
@@ -1167,30 +1178,18 @@ pub fn get_info_for_poc(path:String) -> Result<FileInfoForPoC, Error> {
 // DEBUG logics for PoC
 #[ic_cdk::update(name="forceResetForPoC")]
 pub fn force_reset_for_poc() -> Result<(), Error> {
-    let path = ROOT.to_string();
-    let file_info = get_file_info(&path);
-    match file_info {
-        Some(mut info) => {
-            // Remove all directories
-            let entries = fs::read_dir(&path).unwrap();
-            let _ = entries.map(| entry | {
-                let entry = entry.unwrap();
-                let child_path = entry.path().to_string_lossy().into_owned();
-                if entry.file_type().unwrap().is_dir() { 
-                    fs::remove_dir_all(&child_path).unwrap();
-                } else {
-                    fs::remove_file(&child_path).unwrap();
-                }
-            }).collect::<Vec<()>>();
-
-            // Keep permissions
-            info.updated_at = time();
-            info.updater = caller();
-            set_file_info(&path, &info)?;
-            Ok(())
-        },
-        None => error!(ERROR_NOT_FOUND, "Reset failed")
-    }
+    // Remove all directories
+    let entries = fs::read_dir(&ROOT.to_string()).unwrap();
+    let _ = entries.map(| entry | {
+        let entry = entry.unwrap();
+        let child_path = entry.path().to_string_lossy().into_owned();
+        if entry.file_type().unwrap().is_dir() { 
+            fs::remove_dir_all(&child_path).unwrap();
+        } else {
+            fs::remove_file(&child_path).unwrap();
+        }
+    }).collect::<Vec<()>>();
+    Ok(())
 }
 
 

@@ -45,6 +45,7 @@ service : () -> {
   getAllInfoForPoC : () -> (Result_1) query;
   getInfo : (text) -> (Result_2) query;
   hasPermission : (text) -> (Result_3) query;
+  initCanistorage : () -> (Result);
   listFiles : (text) -> (Result_4) query;
   load : (text) -> (Result_5) query;
   removePermission : (principal, text, bool, bool, bool) -> (Result);

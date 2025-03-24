@@ -848,7 +848,7 @@ pub fn init_canistorage() -> Result<(), Error> {
     let root = ROOT.to_string();
     let file_info = get_file_info(&root);
     match file_info {
-        Some(info) => {
+        Some(_info) => {
             error!(ERROR_ALREADY_INITIALIZED, "Already initialized")
         },
         None => {

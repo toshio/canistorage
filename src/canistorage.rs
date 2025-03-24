@@ -849,7 +849,7 @@ pub fn init_canistorage() -> Result<(), Error> {
     let file_info = get_file_info(&root);
     match file_info {
         Some(info) => {
-            error!(ERROR_ALREADY_INITIALIZED, format!("Canistorage already initialized by {}", info.creator))
+            error!(ERROR_ALREADY_INITIALIZED, "Already initialized")
         },
         None => {
             let owner = caller();

@@ -167,11 +167,13 @@ thread_local! {
 ///
 /// # Arguments
 ///
-/// * `principal` - Principal to check
 /// * `path` - must start with ROOT
-/// * `file_info` - FileInfo
+/// * `principal` - Principal to check
+/// * `manageable` - add manage permission if true
+/// * `readable` - add readable permission if true
+/// * `writable` - add writable permission if true
 #[ic_cdk::update(name="addPermission")]
-pub fn add_permission(principal:Principal, path:String, manageable:bool, readable:bool, writable:bool) -> Result<(), Error> {
+pub fn add_permission(path:String, principal:Principal, manageable:bool, readable:bool, writable:bool) -> Result<(), Error> {
     validate_path(&path)?;
 
     let caller = caller();
@@ -213,11 +215,13 @@ pub fn add_permission(principal:Principal, path:String, manageable:bool, readabl
 ///
 /// # Arguments
 ///
-/// * `principal` - Principal to check
 /// * `path` - must start with ROOT
-/// * `file_info` - FileInfo
+/// * `principal` - Principal to check
+/// * `manageable` - revoke manage permission if true
+/// * `readable` - revoke read permission if true
+/// * `writable` - revoke wrie permission if true
 #[ic_cdk::update(name="removePermission")]
-pub fn remove_permission(principal:Principal, path:String, manageable:bool, readable:bool, writable:bool) -> Result<(), Error> {
+pub fn remove_permission(path:String, principal:Principal, manageable:bool, readable:bool, writable:bool) -> Result<(), Error> {
     validate_path(&path)?;
 
     let caller = caller();
@@ -323,7 +327,7 @@ pub fn save(path:String, mimetype:String, data:Vec<u8>, overwrite:bool) -> Resul
     if file_info.is_some() && overwrite == false {
         return error!(ERROR_ALREADY_EXISTS, "File already exists");
     } else {
-        let parent_info = get_file_info(&parnet_path(&path));
+        let parent_info = get_file_info(&parent_path(&path));
         if parent_info.is_none() || !parent_info.unwrap().is_dir() {
             return error!(ERROR_NOT_FOUND, "Parent directory not found");
         }
@@ -456,7 +460,7 @@ pub fn begin_upload(path:String, mimetype:String, overwrite:bool) -> Result<(), 
     if file_info.is_some() && overwrite == false {
         return error!(ERROR_ALREADY_EXISTS, "File already exists");
     } else {
-        let parent_info = get_file_info(&parnet_path(&path));
+        let parent_info = get_file_info(&parent_path(&path));
         if parent_info.is_none() || !parent_info.unwrap().is_dir() {
             return error!(ERROR_NOT_FOUND, "Parent directory not found");
         }
@@ -740,7 +744,7 @@ pub fn create_directory(path:String) -> Result<(), Error> {
     }
 
     // check parents
-    let parent_info = get_file_info(&parnet_path(&path));
+    let parent_info = get_file_info(&parent_path(&path));
     if parent_info.is_none() || !parent_info.unwrap().is_dir() {
         return error!(ERROR_NOT_FOUND, "Parent directory not found");
     }
@@ -1027,7 +1031,7 @@ fn file_info_path(path:&String) -> String {
     }
 }
 
-fn parnet_path(path:&String) -> String {
+fn parent_path(path:&String) -> String {
     if path == "/" { // Not expected
         "".to_string()
     } else {
@@ -1371,7 +1375,7 @@ mod tests {
 
         // manageable
         set_caller(owner);
-        let result = add_permission(user, ROOT.to_string(), true, false, false);
+        let result = add_permission(ROOT.to_string(), user, true, false, false);
         assert!(result.is_ok());
         set_caller(user);
         let permission = has_permission(ROOT.to_string()).unwrap();
@@ -1379,7 +1383,7 @@ mod tests {
         assert_eq!(permission.readable, false);
         assert_eq!(permission.writable, false);
         set_caller(owner);
-        let result = remove_permission(user, ROOT.to_string(), true, false, false);
+        let result = remove_permission(ROOT.to_string(), user, true, false, false);
         assert!(result.is_ok());
         set_caller(user);
         let permission = has_permission(ROOT.to_string()).unwrap();
@@ -1389,7 +1393,7 @@ mod tests {
 
         // readable
         set_caller(owner);
-        let result = add_permission(user, ROOT.to_string(), false, true, false);
+        let result = add_permission(ROOT.to_string(), user, false, true, false);
         assert!(result.is_ok());
         set_caller(user);
         let permission = has_permission(ROOT.to_string()).unwrap();
@@ -1398,7 +1402,7 @@ mod tests {
         assert_eq!(permission.writable, false);
 
         set_caller(owner);
-        let result = remove_permission(user, ROOT.to_string(), true, true, false);
+        let result = remove_permission(ROOT.to_string(), user, true, true, false);
         assert!(result.is_ok());
         set_caller(user);
         let permission = has_permission(ROOT.to_string()).unwrap();
@@ -1408,7 +1412,7 @@ mod tests {
 
         // writable
         set_caller(owner);
-        let result = add_permission(user, ROOT.to_string(), false, false, true);
+        let result = add_permission(ROOT.to_string(), user, false, false, true);
         assert!(result.is_ok());
         set_caller(user);
         let permission = has_permission(ROOT.to_string()).unwrap();
@@ -1417,7 +1421,7 @@ mod tests {
         assert_eq!(permission.writable, true);
 
         set_caller(owner);
-        let result = remove_permission(user, ROOT.to_string(), true, false, true);
+        let result = remove_permission(ROOT.to_string(), user, true, false, true);
         assert!(result.is_ok());
         set_caller(user);
         let permission = has_permission(ROOT.to_string()).unwrap();
@@ -1427,7 +1431,7 @@ mod tests {
 
         // all
         set_caller(owner);
-        let result = add_permission(user, ROOT.to_string(), true, true, true);
+        let result = add_permission(ROOT.to_string(), user, true, true, true);
         assert!(result.is_ok());
         set_caller(user);
         let permission = has_permission(ROOT.to_string()).unwrap();
@@ -1437,7 +1441,7 @@ mod tests {
 
         // no remove
         set_caller(owner);
-        let result = remove_permission(user, ROOT.to_string(), false, false, false);
+        let result = remove_permission(ROOT.to_string(), user, false, false, false);
         assert!(result.is_ok());
         set_caller(user);
         let permission = has_permission(ROOT.to_string()).unwrap();
@@ -1447,7 +1451,7 @@ mod tests {
 
         // remove
         set_caller(owner);
-        let result = remove_permission(user, ROOT.to_string(), true, true, true);
+        let result = remove_permission(ROOT.to_string(), user, true, true, true);
         assert!(result.is_ok());
         set_caller(user);
         let permission = has_permission(ROOT.to_string()).unwrap();

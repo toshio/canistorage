@@ -55,9 +55,9 @@ Canistorage v0.1.0では、以下の公開メソッドを提供しています�
 
 Canisterにファイルを保存する仕組みとして、Asset Canisterがあります。Asset Canisterの大きな目的は、Webアプリケーションのリソースを保管しHTTPS経由で取得できるようにすることでFrontendアプリケーションをホストすることです。そのため、データに対するアクセス制御という点はあまり考慮されていません。
 
-商用クラウドサービスの[Amazon S3](https://aws.amazon.com/s3/)や[Azure Blob Storage](https://learn.microsoft.com/en-us/azure/storage/blobs/storage-blobs-overview)のようなストレージをInternet Computer上に、Principalベースでのアクセス制御を行う分散型クラウドストレージを目指します。
+Canistorageは、商用クラウドサービスの[Amazon S3](https://aws.amazon.com/s3/)や[Azure Blob Storage](https://learn.microsoft.com/en-us/azure/storage/blobs/storage-blobs-overview)のようなストレージを、Internet Computer上に、Principalベースでアクセス制御できる分散型クラウドストレージを目指しています。
 
-また、個人用ストレージという分野では、[Daniel](https://x.com/realdanmccoy)氏による[uBin](https://h3cjw-syaaa-aaaam-qbbia-cai.ic0.app/)という素晴らしいアプリケーションがありますが、以下のフォーラムから仕様を読むかぎり、現時点では競合するものでは無さそうです。
+また、個人用ストレージという分野では、[Daniel](https://x.com/realdanmccoy)氏による[uBin](https://h3cjw-syaaa-aaaam-qbbia-cai.ic0.app/)という素晴らしいアプリケーションがありますが、以下のフォーラムから仕様を読むかぎり、現時点ではまだ競合するものでは無いように思っています。
 
 https://forum.dfinity.org/t/ubin-formerly-asset-app/32985
 

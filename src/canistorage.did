@@ -34,7 +34,7 @@ type Result_4 = variant { Ok : vec text; Err : Error };
 type Result_5 = variant { Ok : blob; Err : Error };
 type Result_6 = variant { Ok : nat64; Err : Error };
 service : () -> {
-  addPermission : (principal, text, bool, bool, bool) -> (Result);
+  addPermission : (text, principal, bool, bool, bool) -> (Result);
   beginUpload : (text, text, bool) -> (Result);
   cancelUpload : (text) -> (Result);
   commitUpload : (text, nat64, opt blob) -> (Result);
@@ -48,7 +48,7 @@ service : () -> {
   initCanistorage : () -> (Result);
   listFiles : (text) -> (Result_4) query;
   load : (text) -> (Result_5) query;
-  removePermission : (principal, text, bool, bool, bool) -> (Result);
+  removePermission : (text, principal, bool, bool, bool) -> (Result);
   save : (text, text, blob, bool) -> (Result);
   sendData : (text, nat64, blob) -> (Result_6);
   version : () -> (text) query;

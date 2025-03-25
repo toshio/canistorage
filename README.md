@@ -50,6 +50,12 @@ Canistorage v0.1.0では、以下の公開メソッドを提供しています�
 | （getAllInfoForPoC）                                          | query  | ディレクトリ／ファイル情報一括取得                  | PoC用に一時作成                     |
 | （forceResetForPoC）                                          | update | Canistorageの内容を強制リセット                     | PoC用に一時作成                     |
 
+## Canistorage動作検証用テストサイト
+
+https://eqncz-yyaaa-aaaal-qsliq-cai.icp0.io/
+
+アクセス対象のCanistorageのCanister Idは、`tw3il-viaaa-aaaak-quepa-cai`です。
+
 ## 仕様に関する補足説明・制限・課題
 
 ### 独自性 （Asset Canisterとの違い）

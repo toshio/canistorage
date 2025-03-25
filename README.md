@@ -136,11 +136,9 @@ $ dfx deploy
 
 ## 初期設定
 
-Canisterを新規デプロイした時点では、ルートディレクトリ（/）のみ存在し、デプロイしたユーザーのPrincipalによるアクセス権限（managable, readable, writable）が付与されています。
+Canisterを新規デプロイした時点では、まだストレージとして利用できません。
 
-このままでは、dfxコマンド経由でしかCanistorageのファイルにアクセスできないため、ディレクトリを作成したり、特定のPrincipalに対するアクセス許可を設定します。
-
-#### バージョン確認
+### バージョン確認
 
 ```bash
 $ dfx canister call canistorage version
@@ -149,19 +147,20 @@ $ dfx canister call canistorage version
 
 ### 初期化処理
 
-Canistorageを最初に使用する際に呼び出します。呼び出したユーザーのPrincipalがRoot権限を持ちます。
+Canistorageを最初に使用する際に一度だけ呼び出します。  
+`initCanistorage()`を呼び出したユーザーのPrincipalがRoot権限を持ち、ストレージとして利用できる状態になります。
 
 ```bash
 $ dfx canister call canistorage initCanistorage
 ```
 
-#### ディレクトリ作成 (例)
+### ディレクトリ作成 (例)
 
 ```
 $ dfx canister call canistorage createDirectory '("/temp")'
 ```
 
-#### パーミッション付与 (例)
+### パーミッション付与 (例)
 
 ```
 $ dfx canister call canistorage addPermission '("/temp", principal "2vxsx-fae", false, true, true)'

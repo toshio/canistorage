@@ -140,15 +140,13 @@ pub struct Uploading {
     chunk: HashMap<u64, Vec<u8>>,
 }
 
-// TODO Downloading for bigger than 2MiB
-/*
+#[derive(CandidType, Serialize, Deserialize)]
 pub struct Download {
     size: u64,
     downloaded_at: u64,
     chunk: Vec<u8>,
+    sha256: Option<[u8; 32]>, // specified if end of file
 }
-*/
-
 
 /////////////////////////////////////////////////////////////////////////////
 // Global Variables
@@ -389,10 +387,15 @@ pub fn save(path:String, mimetype:String, data:Vec<u8>, overwrite:bool) -> Resul
 /// # Arguments
 ///
 /// * `path` - must start with ROOT and the parent directory must exist
+/// * `start_at` - must start with ROOT and the parent directory must exist
 
-// TODO How to download more than 2MiB
 #[ic_cdk::query]
-pub fn load(path:String) -> Result<Vec<u8>, Error> {
+pub fn load(path:String, start_at:u64) -> Result<Download, Error> {
+
+    if start_at != 0 {
+        return error!(ERROR_UNKNOWN, "TODO: loading more than 2MiB not supported yet.");
+    }
+
     // First, check path 
     validate_path(&path)?;
 
@@ -412,8 +415,19 @@ pub fn load(path:String) -> Result<Vec<u8>, Error> {
     match File::open(path) {
         Ok(mut file) => {
             let mut buffer = Vec::new();
-            let _size = file.read_to_end(&mut buffer); // TODO bigger size handling
-            Ok(buffer)
+            let size = file.read_to_end(&mut buffer); // TODO bigger size handling
+            let downloaded_at = start_at + size.unwrap() as u64;
+            let info = file_info.unwrap();
+            Ok(Download {
+                size: info.size,
+                downloaded_at,
+                chunk: buffer,
+                sha256: if info.size == downloaded_at {
+                    info.sha256
+                } else {
+                    None
+                }
+            })
         },
         Err(e) => match e.kind() { // Not expected
             ErrorKind::NotFound => error!(ERROR_NOT_FOUND, "File not found"),
@@ -1245,17 +1259,17 @@ mod tests {
         let data = "Hello, World!".as_bytes().to_vec();
         let result = save("./.test/file.txt".to_string(), "text/plain".to_string(), data.clone(), false);
         assert!(result.is_ok());
-        let result = load("./.test/file.txt".to_string());
+        let result = load("./.test/file.txt".to_string(), 0);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), data);
+        assert_eq!(result.unwrap().chunk, data);
 
         // overwrite
         let data = "Hello, World!".as_bytes().to_vec();
         let result = save("./.test/file.txt".to_string(), "text/plain".to_string(), data.clone(), true);
         assert!(result.is_ok());
-        let result = load("./.test/file.txt".to_string());
+        let result = load("./.test/file.txt".to_string(), 0);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), data);
+        assert_eq!(result.unwrap().chunk, data);
 
         // error
         let result = save("./.test/file.txt".to_string(), "text/plain".to_string(), data.clone(), false);
@@ -1271,9 +1285,9 @@ mod tests {
         let data = "Hello, World!".as_bytes().to_vec();
         let result = save("./.test/file.txt".to_string(), "text/plain".to_string(), data.clone(), false);
         assert!(result.is_ok());
-        let result = load("./.test/file.txt".to_string());
+        let result = load("./.test/file.txt".to_string(), 0);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), data);
+        assert_eq!(result.unwrap().chunk, data);
 
         // delete
         let result = delete("./.test/file.txt".to_string());
@@ -1501,8 +1515,8 @@ mod tests {
         let result = commit_upload(path.clone(), index, Some(Sha256::digest(expected).into()));
         assert!(result.is_ok());
 
-        let result = load(path.clone());
+        let result = load(path.clone(), 0);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), expected);
+        assert_eq!(result.unwrap().chunk, expected);
     }
 }

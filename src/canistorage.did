@@ -1,3 +1,9 @@
+type Download = record {
+  sha256 : opt blob;
+  downloaded_at : nat64;
+  chunk : blob;
+  size : nat64;
+};
 type Error = record { code : nat32; message : text };
 type FileInfoForPoC = record {
   updated_at : nat64;
@@ -31,7 +37,7 @@ type Result_1 = variant { Ok : FileInfoForPoC; Err : Error };
 type Result_2 = variant { Ok : Info; Err : Error };
 type Result_3 = variant { Ok : Permission; Err : Error };
 type Result_4 = variant { Ok : vec text; Err : Error };
-type Result_5 = variant { Ok : blob; Err : Error };
+type Result_5 = variant { Ok : Download; Err : Error };
 type Result_6 = variant { Ok : nat64; Err : Error };
 service : () -> {
   addPermission : (text, principal, bool, bool, bool) -> (Result);
@@ -47,7 +53,7 @@ service : () -> {
   hasPermission : (text) -> (Result_3) query;
   initCanistorage : () -> (Result);
   listFiles : (text) -> (Result_4) query;
-  load : (text) -> (Result_5) query;
+  load : (text, nat64) -> (Result_5) query;
   removePermission : (text, principal, bool, bool, bool) -> (Result);
   save : (text, text, blob, bool) -> (Result);
   sendData : (text, nat64, blob) -> (Result_6);

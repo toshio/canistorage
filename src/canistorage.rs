@@ -7,13 +7,14 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fs;
 use std::fs::{File, OpenOptions};
-use std::io::{BufReader, BufWriter, Read, Write, ErrorKind};
+use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write, ErrorKind};
 use serde::{Serialize, Deserialize};
 use candid::{CandidType, Principal};
 use sha2::{Sha256, Digest};
 
 const MIMETYPE_DIRECTORY: &str = "canistorage/directory";
 const MAX_PATH:usize = 1024;
+const MAX_READ_SIZE:usize = 1024 * 1024;
 
 const ERROR_NOT_FOUND: u32 = 1; // File or directory not found
 const ERROR_ALREADY_EXISTS: u32 = 2; // Fire or directory already exists
@@ -79,7 +80,7 @@ fn caller() -> Principal {
 /////////////////////////////////////////////////////////////////////////////
 // Data Structures
 /////////////////////////////////////////////////////////////////////////////
-#[derive(CandidType, Serialize, Deserialize, Debug)]
+#[derive(CandidType, Serialize, Deserialize, Debug, Clone)]
 pub struct Error {
     code:u32,
     message: String,
@@ -93,7 +94,7 @@ macro_rules! error {
     };
 }
 
-#[derive(CandidType, Serialize, Deserialize)]
+#[derive(CandidType, Serialize, Deserialize, Debug, Clone)]
 pub struct FileInfo {
     size: u64,  // bytes
     creator: Principal,
@@ -114,14 +115,14 @@ impl FileInfo {
     }
 }
 
-#[derive(CandidType, Serialize, Deserialize)]
+#[derive(CandidType, Serialize, Deserialize, Debug, Clone)]
 pub struct Permission {
     manageable: bool,
     writable: bool,
     readable: bool,
 }
 
-#[derive(CandidType, Serialize, Deserialize)]
+#[derive(CandidType, Serialize, Deserialize, Debug, Clone)]
 pub struct Info {
     size: u64,  // bytes
     creator: Principal,
@@ -132,7 +133,7 @@ pub struct Info {
     sha256: Option<[u8; 32]>,
 }
 
-pub struct Uploading {
+struct Uploading {
     owner: Principal,
     size: u64,
     updated_at: u64,
@@ -140,7 +141,7 @@ pub struct Uploading {
     chunk: HashMap<u64, Vec<u8>>,
 }
 
-#[derive(CandidType, Serialize, Deserialize)]
+#[derive(CandidType, Serialize, Deserialize, Debug, Clone)]
 pub struct Download {
     size: u64,
     downloaded_at: u64,
@@ -391,11 +392,6 @@ pub fn save(path:String, mimetype:String, data:Vec<u8>, overwrite:bool) -> Resul
 
 #[ic_cdk::query]
 pub fn load(path:String, start_at:u64) -> Result<Download, Error> {
-
-    if start_at != 0 {
-        return error!(ERROR_UNKNOWN, "TODO: loading more than 2MiB not supported yet.");
-    }
-
     // First, check path 
     validate_path(&path)?;
 
@@ -414,14 +410,18 @@ pub fn load(path:String, start_at:u64) -> Result<Download, Error> {
     // FIXME check file size before read to 
     match File::open(path) {
         Ok(mut file) => {
-            let mut buffer = Vec::new();
-            let size = file.read_to_end(&mut buffer); // TODO bigger size handling
-            let downloaded_at = start_at + size.unwrap() as u64;
+            let mut buffer = [0u8; MAX_READ_SIZE];
+            if start_at != 0u64 {
+                let _ = file.seek(SeekFrom::Start(start_at)).or_else(|e| error!(ERROR_UNKNOWN, format!("{:?}", e)));
+            }
+            let readsize = file.read(&mut buffer).or_else(|e| error!(ERROR_UNKNOWN, format!("{:?}", e))).unwrap();
+            let downloaded_at = start_at + readsize as u64;
             let info = file_info.unwrap();
+
             Ok(Download {
                 size: info.size,
                 downloaded_at,
-                chunk: buffer,
+                chunk: buffer[..readsize].to_vec(),
                 sha256: if info.size == downloaded_at {
                     info.sha256
                 } else {
@@ -573,8 +573,6 @@ pub fn commit_upload(path:String, size:u64, sha256:Option<[u8; 32]>) -> Result<(
                             loop {
                                 match value.chunk.get(&index) {
                                     Some(data) => {
-                                        println!("index:{}, data.size:{}", index, data.len());
-
                                         index += data.len() as u64;
                                         hasher.update(data);
                                         let _result = buffer.write(data); // TODO handling result
@@ -1518,5 +1516,54 @@ mod tests {
         let result = load(path.clone(), 0);
         assert!(result.is_ok());
         assert_eq!(result.unwrap().chunk, expected);
+    }
+
+    #[test]
+    fn test_load_save_large_file() {
+        let _context = setup();
+
+        // save large file
+        let path = "./.test/learge_file.bin".to_string();
+
+        // Begin
+        let result = begin_upload(path.clone(), "application/octet-stream".to_string(), false);
+        assert!(result.is_ok());
+
+        // Send
+        let mut index = 0 as u64;
+        let mut hasher = Sha256::new();
+        for i in "Hello, world".chars() {
+            let buffer = vec![i as u8; MAX_READ_SIZE];
+            hasher.update(&buffer);
+            let result = send_data(path.clone(), index, buffer.to_vec());
+            assert!(result.is_ok());
+            index += buffer.len() as u64;
+            assert_eq!(result.unwrap(), index);
+        }
+
+        // Commit
+        let result = commit_upload(path.clone(), index, Some(hasher.finalize().into()));
+        assert!(result.is_ok());
+
+        // Verify
+        let info = get_info(path.clone()).unwrap();
+        assert_eq!(info.size, index);
+
+        // Load large file
+        let mut start_at = 0;
+        let mut hasher = Sha256::new();
+        let download = loop {
+            let result = load(path.clone(), start_at);
+            assert!(result.is_ok());
+            let download = result.unwrap();
+            start_at = download.downloaded_at;
+            hasher.update(&download.chunk);
+
+            if info.size == download.downloaded_at {
+                break download;
+            }
+        };
+
+        assert_eq!(download.sha256.unwrap(), hasher.finalize().as_slice());
     }
 }

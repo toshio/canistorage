@@ -1,6 +1,6 @@
 [package]
 name = "canistorage"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 authors = ["toshio"]
 repository = "https://github.com/toshio/canistorage"

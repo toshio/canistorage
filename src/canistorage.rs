@@ -869,6 +869,9 @@ pub fn init_canistorage() -> Result<(), Error> {
         },
         None => {
             let owner = caller();
+            if owner == Principal::anonymous() {
+                return error!(ERROR_PERMISSION_DENIED, "Anonymous is not allowed");
+            }
             let now = time();
                 
             set_file_info(&root, &FileInfo {

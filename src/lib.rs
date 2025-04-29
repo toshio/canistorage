@@ -49,6 +49,6 @@ mod tests {
 
     #[test]
     fn test_version() {
-        assert_eq!(version(), "canistorage 0.1.2");
+        assert_eq!(version(), format!("canistorage {}", env!("CARGO_PKG_VERSION")));
     }
 }

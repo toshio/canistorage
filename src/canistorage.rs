@@ -74,7 +74,7 @@ fn time() -> u64 {
 
 #[cfg(not(test))]
 fn caller() -> Principal {
-    ic_cdk::api::caller()
+    ic_cdk::api::msg_caller()
 }
 
 /////////////////////////////////////////////////////////////////////////////
@@ -565,10 +565,11 @@ pub fn commit_upload(path:String, size:u64, sha256:Option<[u8; 32]>) -> Result<(
                 } else {
                     // write file
                     let temp_path = temp_path(&path);
+                    let mut hasher = Sha256::new();
+                    let mut sha256_verified:Option<[u8; 32]> = None;
                     let result = match fs::File::create(&temp_path) {
                         Ok(file) => {
                             let mut buffer = BufWriter::with_capacity(2*1024*1024, file); // 2MiB Buffer
-                            let mut hasher = Sha256::new();
                             let mut index:u64 = 0;
                             loop {
                                 match value.chunk.get(&index) {
@@ -581,7 +582,8 @@ pub fn commit_upload(path:String, size:u64, sha256:Option<[u8; 32]>) -> Result<(
                                         if index != size {
                                             return error!(ERROR_INVALID_SIZE, "Invalid size");
                                         }
-                                        if sha256.is_some() && hasher.finalize().as_slice() != sha256.unwrap() {
+                                        sha256_verified = Some(hasher.finalize().into());
+                                        if sha256.is_some() && sha256_verified.unwrap() != sha256.unwrap() {
                                             return error!(ERROR_INVALID_HASH, "Invalid hash");
                                         }
                                         let _result = buffer.flush(); // TODO handling result
@@ -602,7 +604,7 @@ pub fn commit_upload(path:String, size:u64, sha256:Option<[u8; 32]>) -> Result<(
                                     info.size = size;
                                     info.updated_at = now;
                                     info.mimetype = value.mimetype.clone();
-                                    info.sha256 = sha256;
+                                    info.sha256 = sha256_verified;
                                     info.signature = None;
                                     info
                                 },
@@ -618,7 +620,7 @@ pub fn commit_upload(path:String, size:u64, sha256:Option<[u8; 32]>) -> Result<(
                                         manageable: Vec::new(),
                                         readable: Vec::new(),
                                         writable: Vec::new(),
-                                        sha256,
+                                        sha256: sha256_verified,
                                         signature: None,
                                     }
                                 }

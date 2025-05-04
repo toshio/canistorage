@@ -3,10 +3,9 @@
 /// Copyright© 2025 toshio
 ///
 use std::cell::RefCell;
-use std::cmp::Ordering;
+use std::cmp::{self, Ordering};
 use std::collections::HashMap;
-use std::fs;
-use std::fs::{File, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write, ErrorKind};
 use serde::{Serialize, Deserialize};
 use candid::{CandidType, Principal};
@@ -410,14 +409,13 @@ pub fn load(path:String, start_at:u64) -> Result<Download, Error> {
     // FIXME check file size before read to 
     match File::open(path) {
         Ok(mut file) => {
-            let mut buffer = [0u8; MAX_READ_SIZE];
+            let info = file_info.unwrap();
+            let mut buffer = vec![0; cmp::min(MAX_READ_SIZE, info.size as usize)];
             if start_at != 0u64 {
                 let _ = file.seek(SeekFrom::Start(start_at)).or_else(|e| error!(ERROR_UNKNOWN, format!("{:?}", e)));
             }
             let readsize = file.read(&mut buffer).or_else(|e| error!(ERROR_UNKNOWN, format!("{:?}", e))).unwrap();
             let downloaded_at = start_at + readsize as u64;
-            let info = file_info.unwrap();
-
             Ok(Download {
                 size: info.size,
                 downloaded_at,
